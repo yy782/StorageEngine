@@ -1,7 +1,7 @@
 #include "DbTable.hpp"
 #include "op_status.hpp"
 #include "string_or_view.hpp"
-
+#include "tx_base.hpp"
 using namespace cmn;
 class EngineShard;
 class DbSlice 
@@ -44,7 +44,8 @@ class DbSlice
     };
 
     using Iterator = IteratorT<PrimeIterator>;
-    using ConstIterator = IteratorT<PrimeConstIterator>;    
+    using ConstIterator = IteratorT<PrimeConstIterator>; 
+    using Context = DbContext;   
     struct ItAndUpdater 
     {
         Iterator it;
@@ -63,7 +64,20 @@ class DbSlice
 
   void Del(Iterator it, DbTable* db_table = nullptr, bool async = false);
   void DelMutable(ItAndUpdater it_updater); // 通过 FindMutable 找到 key 后删除
+  bool IsDbValid(DbIndex id) const { return id < db_arr_.size() && bool(db_arr_[id]); } 
 private:
+    enum class UpdateStatsMode : uint8_t {
+        kReadStats,
+        kMutableStats,
+    };
+    OpResult<ItAndUpdater> AddOrFindInternal(std::string_view key,
+                                            std::optional<unsigned> req_obj_type);
+
+    OpResult<PrimeIterator> FindInternal(const Context& cntx, std::string_view key,
+                                        std::optional<unsigned> req_obj_type,
+                                        UpdateStatsMode stats_mode) const;
+    OpResult<ItAndUpdater> FindMutableInternal(const Context& cntx, std::string_view key,
+                                             std::optional<unsigned> req_obj_type); 
     EngineShard* owner_;
     DbTableArray db_arr_;
 };
