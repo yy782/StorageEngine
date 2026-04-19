@@ -1,5 +1,5 @@
 #include "EngineShard.hpp"
-
+constexpr size_t kQueueLen = 64;
 thread_local mi_heap_t* data_heap = nullptr; // 线程本地堆指针
 __thread EngineShard* EngineShard::shard_ = nullptr;
 void EngineShard::InitThreadLocal(ProactorBase* pb) {
@@ -9,7 +9,14 @@ void EngineShard::InitThreadLocal(ProactorBase* pb) {
     InitTLStatelessAllocMR(shard_->memory_resource()); // 初始化无状态内存分配器
     //shard_->shard_search_indices_ = std::make_unique<ShardDocIndices>();
 }
-
+EngineShard::EngineShard(util::ProactorBase* pb, mi_heap_t* heap) : 
+queue_(kQueueLen, 1, 1),
+queue2_(kQueueLen / 2, 2, 2),
+shard_id_(pb->GetPoolIndex()),
+mi_resource_(heap) {
+    queue_.Start(absl::StrCat("shard_queue_", shard_id()));
+    queue2_.Start(absl::StrCat("l2_queue_", shard_id()));
+}
 void EngineShard::DestroyThreadLocal() {
     if (!shard_)
         return;
