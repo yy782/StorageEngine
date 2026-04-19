@@ -3,6 +3,7 @@
 #include "detail/task_queue.hpp"
 #include "detail/intent_lock.hpp"
 #include "util/sliding_counter.h"
+#include "memory/mi_memory_resource.hpp"
 using ShardId = uint16_t;
 
 class EngineShard 

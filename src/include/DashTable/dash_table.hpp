@@ -12,7 +12,7 @@
 #include <mutex>
 
 
-
+namespace dfly{
 inline size_t HashString(const std::string& s) {
     // 使用 xxhash 风格的简单哈希
     size_t hash = 0x811c9dc5;
@@ -495,7 +495,7 @@ uint8_t DashTable<_Key, _Value>::Iterator<IsConst, IsSingleBucket>::GetSlotId() 
     return slot_id_;
 }
 
-
+}
 
 
 

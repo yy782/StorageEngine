@@ -46,7 +46,7 @@ else()
     )
 endif()    
 # 主代码
-
+add_subdirectory(helio)
 add_subdirectory(src)
 # 网络层
 add_subdirectory(network)
@@ -57,17 +57,16 @@ endif()
 
 # 主程序
 add_executable(storage_engine main.cpp)
-
 target_include_directories(storage_engine PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/network
     ${CMAKE_SOURCE_DIR}/src/include
-    ${CMAKE_SOURCE_DIR}/helio
-
 )
+
 
 target_link_libraries(storage_engine PRIVATE
     network
     storage_core
     mimalloc
+    helio
 )

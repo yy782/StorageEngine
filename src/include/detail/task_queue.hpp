@@ -5,6 +5,8 @@
 #include "helio/util/fibers/fiberqueue_threadpool.h"
 #include "helio/util/fibers/fibers.h"
 
+using namespace  util::fb2;
+
 class TaskQueue {
 public:
     TaskQueue(unsigned queue_size, unsigned start_size, unsigned pool_max_size):

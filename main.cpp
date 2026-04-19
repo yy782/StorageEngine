@@ -2,7 +2,7 @@
 #include <asio.hpp>
 #include <iostream>
 #include <signal.h>
-#include "redis_server.h"
+#include "network/redis_server.hpp"
 #include <memory>
 
 std::unique_ptr<EngineShardSet> g_shard_set;

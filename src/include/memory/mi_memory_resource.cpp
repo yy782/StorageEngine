@@ -7,10 +7,6 @@
 
 //#include "base/logging.h"
 
-namespace dfly {
-
-using namespace std;
-
 void* MiMemoryResource::do_allocate(size_t size, size_t align) {
 
     void* res = mi_heap_malloc_aligned(heap_, size, align);
@@ -31,4 +27,4 @@ void MiMemoryResource::do_deallocate(void* ptr, size_t size, size_t align) {
     mi_free_size_aligned(ptr, size, align);
 }
 
-}  // namespace dfly
+
