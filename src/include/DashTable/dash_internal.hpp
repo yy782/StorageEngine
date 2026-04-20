@@ -138,9 +138,6 @@ public:
         assert(i < finger_arr_.size());
         return finger_arr_[i];
     }
-
-    // void SetStashPtr(unsigned stash_pos, uint8_t meta_hash, BucketBase* next);
-    // unsigned UnsetStashPtr(uint8_t fp_hash, unsigned stash_pos, BucketBase* next);
     uint32_t GetProbe(bool probe) const {
         return slotb_.GetProbe(probe);
     }
@@ -188,28 +185,22 @@ protected:
     bool SetStash(uint8_t fp, unsigned stash_pos, bool probe);
     bool ClearStash(uint8_t fp, unsigned stash_pos, bool probe);
 
-    SlotBitmap<NUM_SLOTS> slotb_;  // allocation bitmap + pointer bitmap + counter
-
-    /*only use the first 14 bytes, can be accelerated by
-        SSE instruction,0-13 for finger, 14-17 for overflowed*/
+    SlotBitmap<NUM_SLOTS> slotb_;  
     FpArray finger_arr_;
-    StashFpArray stash_arr_;
+    StashFpArray stash_arr_; // 存储 Stash 槽位的指纹
 
-    uint8_t stash_busy_ = 0;  // kStashFpLen+1 bits are used
-    uint8_t stash_pos_ = 0;   // 4x2 bits for pointing to stash bucket.
-
-    // stash_probe_mask_ indicates whether the overflow fingerprint is for the neighbour (1)
-    // or for this bucket (0). kStashFpLen bits are used.
+    uint8_t stash_busy_ = 0;  
+    uint8_t stash_pos_ = 0;   
     uint8_t stash_probe_mask_ = 0;
 
-    // number of overflowed items stored in stash buckets that do not have fp hashes.
-    uint8_t overflow_count_ = 0;
+
+    uint8_t overflow_count_ = 0;  // 溢出计数器。记录有多少个 Stash 引用被“溢出”存储到了邻居桶中。
 };  // BucketBase
 
 struct DefaultSegmentPolicy {
     static constexpr unsigned kSlotNum = 12;
     static constexpr unsigned kBucketNum = 64;
-    static constexpr unsigned  kStashBucketNum = 4;
+    // static constexpr unsigned  kStashBucketNum = 4;
     // static constexpr bool kUseVersion = true;
 };
 
@@ -220,9 +211,189 @@ template <typename KeyType, typename ValueType, typename Policy = DefaultSegment
 class Segment {
     static constexpr unsigned kSlotNum = Policy::kSlotNum;
     static constexpr unsigned kBucketNum = Policy::kBucketNum;
-    static constexpr unsigned kStashBucketNum = Policy::kStashBucketNum; // not same
+    static constexpr unsigned kStashBucketNum = 4;
     // static constexpr bool kUseVersion = Policy::kUseVersion;
+    static constexpr unsigned kFingerBits = 8;
+    static constexpr unsigned kTotalBuckets = kBucketNum + kStashBucketNum;
+    static_assert(kTotalBuckets < 0xFF);
+    using BucketType = BucketBase<kSlotNum>;
+
+    struct Bucket : public BucketType{
+        using BucketType::kNanSlot;
+        using typename BucketType::SlotId;
+        KeyType key[kSlotNum];
+        ValueType value[kSlotNum];    
+    };
+    static constexpr PhysicalBid kNanBid = 0xFF;
+    using SlotId = typename BucketType::SlotId;    
 public:
+    struct Iterator {
+        PhysicalBid index;  // bucket index
+        uint8_t slot;
+
+        Iterator() : index(kNanBid), slot(BucketType::kNanSlot) {
+        }
+
+        Iterator(PhysicalBid bi, uint8_t sid) : index(bi), slot(sid) {
+        }
+
+        bool found() const {
+            return index != kNanBid;
+        }
+    };
+    using Value_t = ValueType;
+    using Key_t = KeyType;
+    using Hash_t = uint64_t;
+
+    template <typename K, typename V, typename Pred, typename OnMoveCb>
+    std::pair<Iterator, bool> Insert(K&& key, V&& value, Hash_t key_hash, Pred&& pred,
+                                    OnMoveCb&& on_move_cb);
+
+    template <typename HashFn, typename OnMoveCb>
+    void Split(HashFn&& hfunc, Segment* dest, OnMoveCb&& on_move_cb);
+
+    void Delete(const Iterator& it, Hash_t key_hash);
+
+    void Clear();  // clears the segment.
+
+    size_t SlowSize() const;
+    
+    size_t local_depth() const {
+        return local_depth_;
+    }
+    unsigned num_buckets() const {
+        return kBucketNum + kStashBucketNum;
+    }
+    uint32_t segment_id() const {
+        return segment_id_;
+    }
+    void set_segment_id(uint32_t new_id) {
+        segment_id_ = new_id;
+    }
+    const Bucket& GetBucket(PhysicalBid i) const {
+        return bucket_[i];
+    }
+
+    Bucket& GetBucket(PhysicalBid i) {
+        return bucket_[i];
+    }
+
+    bool IsBusy(PhysicalBid bid, unsigned slot) const {
+        return GetBucket(bid).GetBusy() & (1U << slot);
+    }    
+    Key_t& Key(PhysicalBid bid, unsigned slot) {
+        assert(IsBusy(bid, slot));
+        return GetBucket(bid).key[slot];
+    }
+
+    const Key_t& Key(PhysicalBid bid, unsigned slot) const {
+        assert(IsBusy(bid, slot));
+        return GetBucket(bid).key[slot];
+    }
+
+    Value_t& Value(PhysicalBid bid, unsigned slot) {
+        assert(IsBusy(bid, slot));
+        return GetBucket(bid).value[slot];
+    }
+
+    const Value_t& Value(PhysicalBid bid, unsigned slot) const {
+        assert(IsBusy(bid, slot));
+        return GetBucket(bid).value[slot];
+    }
+
+    template <typename Cb> 
+    void TraverseAll(Cb&& cb) const; // 对当前 Segment 中所有被占用的槽位遍历接口
+private:
+    Bucket bucket_[kTotalBuckets];
+    uint8_t local_depth_; 
+    uint32_t segment_id_;  // segment id in the table.
+    PMR_NS::memory_resource* mr_ = nullptr;
+};
+
+class DashTableBase {
+ public:
+    explicit DashTableBase(uint32_t gd)
+        : unique_segments_(1 << gd), initial_depth_(gd), global_depth_(gd) {
+    }
+
+    DashTableBase(const DashTableBase&) = delete;
+    DashTableBase& operator=(const DashTableBase&) = delete;
+
+    uint32_t unique_segments() const {
+        return unique_segments_;
+    }
+
+    uint16_t depth() const {
+        return global_depth_;
+    }
+
+    size_t size() const {
+        return size_;
+    }
+
+    size_t Empty() const {
+        return size_ == 0;
+    }
+
+ protected:
+    uint32_t SegmentId(size_t hash) const {
+        if (global_depth_) {
+            return hash >> (64 - global_depth_);
+        }
+
+        return 0;
+    }
+
+    size_t size_ = 0;
+    uint32_t unique_segments_ = 0; // 实际段数
+    uint32_t bucket_count_ = 0;
+    uint8_t initial_depth_;
+    uint8_t global_depth_;
+};  // DashTableBase
+template <typename KeyType, typename ValueType> 
+struct IteratorPair {
+    IteratorPair(KeyType& k, ValueType& v) : 
+    first(k), second(v) {
+    }
+
+    IteratorPair* operator->() {
+        return this;
+    }
+
+    const IteratorPair* operator->() const {
+        return this;
+    }
+
+    KeyType& first;
+    ValueType& second;
+};
+class DashCursor {
+public:
+    explicit DashCursor(uint64_t token = 0) : val_(token) {
+    }
+
+    DashCursor(uint8_t depth, uint32_t seg_id, PhysicalBid bid)
+        : val_((uint64_t(seg_id) << (40 - depth)) | bid) {
+    }
+
+    static DashCursor end() {
+        return DashCursor{};
+    }
+
+    PhysicalBid bucket_id() const {
+        return val_ & 0xFF;
+    }
+    uint32_t segment_id(uint8_t depth) const {
+        return val_ >> (40 - depth);
+    }
+    uint64_t token() const {
+        return val_;
+    }
+    explicit operator bool() const {
+        return val_ != 0;
+    }
+private:
+    uint64_t val_;
 };
 
 template <unsigned NUM_SLOTS> 
@@ -235,6 +406,15 @@ uint32_t BucketBase<NUM_SLOTS>::CompareFP(uint8_t fp) const {
     return mask;
 }
 
+
+template <typename Key, typename Value, typename Policy>
+template <typename Cb>
+void Segment<Key, Value, Policy>::TraverseAll(Cb&& cb) const {
+    for (uint8_t i = 0; i < kTotalBuckets; ++i) {
+        bucket_[i].ForEachSlot([&](auto*, SlotId slot, bool) 
+        { cb(Iterator{i, slot}); });
+    }
+}
 
 }
 }
