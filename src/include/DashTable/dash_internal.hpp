@@ -80,12 +80,79 @@ public:
         }
     }
 
-    void ClearSlot(unsigned index);
-    void SetSlot(unsigned index, bool probe);
+    void ClearSlot(unsigned index)
+    {
+        assert(Size() > 0);
+        if constexpr (SINGLE) {
+            uint32_t new_bitmap = val_[0].d & 
+                (~(1u << (index + 18))) & (~(1u << (index + 4)));
+            new_bitmap -= 1;
+            val_[0].d = new_bitmap;
+        } else {
+            uint32_t mask = 1u << index;
+            val_[0].d &= ~mask;
+            val_[1].d &= ~mask;
+        }        
+    }
 
-    bool ShiftLeft();
+    void SetSlot(unsigned index, bool probe){
+        if constexpr (SINGLE) {
+            assert(((val_[0].d >> (index + 18)) & 1) == 0);
+            val_[0].d |= (1 << (index + 18));
+            val_[0].d |= (unsigned(probe) << (index + 4));
 
-    void Swap(unsigned slot_a, unsigned slot_b);
+            assert((val_[0].d & kBitmapLenMask) < NUM_SLOTS);
+            ++val_[0].d;
+            assert(__builtin_popcount(val_[0].d >> 18) == (val_[0].d & kBitmapLenMask));
+        } else {
+            assert(((val_[0].d >> index) & 1) == 0);
+            val_[0].d |= (1u << index);
+            val_[1].d |= (unsigned(probe) << index);
+        }
+    }
+
+    bool ShiftLeft(){
+        constexpr uint32_t kBusyLastSlot = (kAllocMask >> 1) + 1;
+        bool res;
+        if constexpr (SINGLE) {
+            constexpr uint32_t kShlMask = kAllocMask - 1;  // reset lsb
+            res = (val_[0].d & (kBusyLastSlot << 18)) != 0;
+            uint32_t l = (val_[0].d << 1) & (kShlMask << 4);
+            uint32_t p = (val_[0].d << 1) & (kShlMask << 18);
+            val_[0].d = __builtin_popcount(p) | l | p;
+        } else {
+            res = (val_[0].d & kBusyLastSlot) != 0;
+            val_[0].d <<= 1;
+            val_[0].d &= kAllocMask;
+            val_[1].d <<= 1;
+            val_[1].d &= kAllocMask;
+        }
+        return res;        
+    }
+
+    void Swap(unsigned slot_a, unsigned slot_b)
+    {
+        if (slot_a > slot_b)
+            std::swap(slot_a, slot_b);
+
+        if constexpr (SINGLE) {
+            uint32_t a = (val_[0].d << (slot_b - slot_a)) ^ val_[0].d;
+            uint32_t bm = (1 << (slot_b + 4)) | (1 << (slot_b + 18));
+            a &= bm;
+            a |= (a >> (slot_b - slot_a));
+            val_[0].d ^= a;
+        } else {
+            uint32_t a = (val_[0].d << (slot_b - slot_a)) ^ val_[0].d;
+            a &= (1 << slot_b);
+            a |= (a >> (slot_b - slot_a));
+            val_[0].d ^= a;
+
+            a = (val_[1].d << (slot_b - slot_a)) ^ val_[1].d;
+            a &= (1 << slot_b);
+            a |= (a >> (slot_b - slot_a));
+            val_[1].d ^= a;
+        }
+    }
 
 private:
     struct Unaligned {
@@ -180,10 +247,65 @@ public:
     }
 
 protected:
-    uint32_t CompareFP(uint8_t fp) const;
-    bool ShiftRight();
-    bool SetStash(uint8_t fp, unsigned stash_pos, bool probe);
-    bool ClearStash(uint8_t fp, unsigned stash_pos, bool probe);
+    uint32_t CompareFP(uint8_t fp) const{
+        static_assert(FpArray{}.size() <= 16);
+
+        // Replicate 16 times fp to key_data.
+        const __m128i key_data = _mm_set1_epi8(fp);
+
+        // Loads 16 bytes of src into seg_data.
+        __m128i seg_data = mm_loadu_si128(reinterpret_cast<const __m128i*>(finger_arr_.data()));
+
+        // compare 16-byte vectors seg_data and key_data, dst[i] := ( a[i] == b[i] ) ? 0xFF : 0.
+        __m128i rv_mask = _mm_cmpeq_epi8(seg_data, key_data);
+
+        // collapses 16 msb bits from each byte in rv_mask into mask.
+        int mask = _mm_movemask_epi8(rv_mask);
+
+        // Note: Last 2 operations can be combined in skylake with _mm_cmpeq_epi8_mask.
+        return mask;        
+    }
+
+    bool ShiftRight(){
+        for (int i = NUM_SLOTS - 1; i > 0; --i) {
+            finger_arr_[i] = finger_arr_[i - 1];
+        }
+        bool res = slotb_.ShiftLeft();
+        assert(slotb_.FindEmptySlot() == 0);
+        return res;        
+    }
+
+    bool SetStash(uint8_t fp, unsigned stash_pos, bool probe){
+        unsigned free_slot = __builtin_ctz(~stash_busy_);
+        if (free_slot >= kStashFpLen)
+            return false;
+
+        stash_arr_[free_slot] = fp;
+        stash_busy_ |= (1u << free_slot); 
+        stash_probe_mask_ |= (unsigned(probe) << free_slot);
+        free_slot *= 2;
+        stash_pos_ &= (~(3 << free_slot));       
+        stash_pos_ |= (stash_pos << free_slot);  
+        return true;        
+    }
+
+
+    bool ClearStash(uint8_t fp, unsigned stash_pos, bool probe){
+        auto cb = [stash_pos, this](unsigned i, unsigned pos) -> SlotId {
+            if (pos == stash_pos) {
+            stash_busy_ &= (~(1u << i));
+            stash_probe_mask_ &= (~(1u << i));
+            stash_pos_ &= (~(3u << (i * 2)));
+
+            assert(0u == ((stash_pos_ >> (i * 2)) & 3));
+            return 0;
+            }
+            return kNanSlot;
+        };
+
+        std::pair<unsigned, SlotId> res = IterateStash(fp, probe, std::move(cb));
+        return res.second != kNanSlot;        
+    }
 
     SlotBitmap<NUM_SLOTS> slotb_;  
     FpArray finger_arr_;
@@ -222,7 +344,46 @@ class Segment {
         using BucketType::kNanSlot;
         using typename BucketType::SlotId;
         KeyType key[kSlotNum];
-        ValueType value[kSlotNum];    
+        ValueType value[kSlotNum];  
+        
+        template <typename U, typename V>
+        void Insert(uint8_t slot, U&& u, V&& v, uint8_t meta_hash, bool probe);
+        template <typename U, typename V>
+        int TryInsertToBucket(U&& key, V&& value, uint8_t meta_hash, bool probe);  
+        template <typename Pred> 
+        SlotId FindByFp(uint8_t fp_hash, bool probe, Pred&& pred) const;
+
+        bool ShiftRight();
+
+        void Swap(unsigned slot_a, unsigned slot_b) {
+            BucketType::Swap(slot_a, slot_b);
+            std::swap(key[slot_a], key[slot_b]);
+            std::swap(value[slot_a], value[slot_b]);
+        }
+
+        template <typename This, typename Cb> 
+        void ForEachSlotImpl(This obj, Cb&& cb) const {
+            uint32_t mask = this->GetBusy();
+            uint32_t probe_mask = this->GetProbe(true);
+
+            for (unsigned j = 0; j < kSlotNum; ++j) {
+                if (mask & 1) {
+                cb(obj, j, probe_mask & 1);
+                }
+                mask >>= 1;
+                probe_mask >>= 1;
+            }
+        }
+
+        // calls for each busy slot: cb(iterator, probe)
+        template <typename Cb> void ForEachSlot(Cb&& cb) const {
+            ForEachSlotImpl(this, std::forward<Cb&&>(cb));
+        }
+
+        // calls for each busy slot: cb(iterator, probe)
+        template <typename Cb> void ForEachSlot(Cb&& cb) {
+            ForEachSlotImpl(this, std::forward<Cb&&>(cb));
+        }        
     };
     static constexpr PhysicalBid kNanBid = 0xFF;
     using SlotId = typename BucketType::SlotId;    
@@ -249,6 +410,18 @@ public:
     std::pair<Iterator, bool> Insert(K&& key, V&& value, Hash_t key_hash, Pred&& pred,
                                     OnMoveCb&& on_move_cb);
 
+    template <typename U, typename V, typename OnMoveCb>
+    Iterator InsertUniq(U&& key, V&& value, Hash_t key_hash, 
+                        bool spread, //  是否在主桶和邻居桶之间做负载均衡
+                        /*
+                            spread true:
+                                选择负载较小的桶（主桶或邻居桶）
+                            spread false:
+                                 优先选择主桶   	   
+                        */                          
+                        OnMoveCb&& on_move_cb); // 条目移动时的回调（用于通知淘汰策略）  
+                      
+                        
     template <typename HashFn, typename OnMoveCb>
     void Split(HashFn&& hfunc, Segment* dest, OnMoveCb&& on_move_cb);
 
@@ -301,9 +474,28 @@ public:
         return GetBucket(bid).value[slot];
     }
 
+    unsigned num_buckets() const {
+        return kBucketNum + kStashBucketNum;
+    }
+
     template <typename Cb> 
     void TraverseAll(Cb&& cb) const; // 对当前 Segment 中所有被占用的槽位遍历接口
+
+
 private:
+
+    static LogicalBid HomeIndex(Hash_t hash) { // 计算主桶位置
+        return (hash >> kFingerBits) % kBucketNum;
+    }
+
+    static LogicalBid NextBid(LogicalBid bid) { // 下一个桶（线性探测）
+        return bid < kBucketNum - 1 ? bid + 1 : 0;
+    }
+
+    static LogicalBid PrevBid(LogicalBid bid) { // 上一个桶
+        return bid ? bid - 1 : kBucketNum - 1;
+    }
+
     Bucket bucket_[kTotalBuckets];
     uint8_t local_depth_; 
     uint32_t segment_id_;  // segment id in the table.
@@ -396,15 +588,144 @@ private:
     uint64_t val_;
 };
 
-template <unsigned NUM_SLOTS> 
-uint32_t BucketBase<NUM_SLOTS>::CompareFP(uint8_t fp) const {
-    static_assert(FpArray{}.size() <= 16);
-    const __m128i key_data = _mm_set1_epi8(fp);
-    __m128i seg_data = mm_loadu_si128(reinterpret_cast<const __m128i*>(finger_arr_.data()));
-    __m128i rv_mask = _mm_cmpeq_epi8(seg_data, key_data);
-    int mask = _mm_movemask_epi8(rv_mask);
-    return mask;
+
+template <typename Key, typename Value, typename Policy>
+template <typename U, typename V>
+int Segment<Key, Value, Policy>::Bucket::TryInsertToBucket(U&& key, V&& value, 
+                                                            uint8_t meta_hash, bool probe)
+{
+    if (IsFull()) {
+        return -1;  // no free space in the bucket.
+    }
+
+    int slot = slotb_.FindEmptySlot();
+    assert(slot >= 0);
+    Insert(slot, std::forward<U>(key), std::forward<V>(value), meta_hash, probe);
+    return slot;    
 }
+
+template <typename Key, typename Value, typename Policy>
+bool Segment<Key, Value, Policy>::Bucket::ShiftRight() {
+    bool res = BucketType::ShiftRight();
+    for (int i = kSlotNum - 1; i > 0; i--) {
+        std::swap(key[i], key[i - 1]);
+        std::swap(value[i], value[i - 1]);
+    }
+    return res;
+}
+
+template <typename Key, typename Value, typename Policy>
+template <typename U, typename V>
+void Segment<Key, Value, Policy>::Bucket::Insert(uint8_t slot, U&& u, V&& v, 
+                                                uint8_t meta_hash, bool probe)
+{
+    assert(slot < kSlotNum);
+    key[slot] = std::forward<U>(u);
+    value[slot] = std::forward<V>(v);
+    SetHash(slot, meta_hash, probe);    
+}
+template <typename Key, typename Value, typename Policy>
+template <typename U, typename V>
+void Segment<Key, Value, Policy>::Bucket::ForEachSlotImpl(This obj, Cb&& cb) const {
+    uint32_t mask = this->GetBusy();
+    uint32_t probe_mask = this->GetProbe(true);
+
+    for (unsigned j = 0; j < kSlotNum; ++j) {
+        if (mask & 1) {
+            cb(obj, j, probe_mask & 1);
+        }
+        mask >>= 1;
+        probe_mask >>= 1;
+    }
+}
+
+
+template <typename Key, typename Value, typename Policy>
+template <typename U, typename V, typename OnMoveCb>
+auto Segment<Key, Value, Policy>::InsertUniq(U&& key, V&& value, Hash_t key_hash, bool spread,
+                                             OnMoveCb&& on_move_cb) -> Iterator {
+    const uint8_t bid = HomeIndex(key_hash);
+    const uint8_t nid = NextBid(bid); 
+
+    Bucket& target = bucket_[bid]; // 主桶
+    Bucket& neighbor = bucket_[nid]; // 邻居桶
+    Bucket* insert_first = &target; 
+
+    uint8_t meta_hash = key_hash & kFpMask; // 8 位指纹，用于快速过滤
+    unsigned ts = target.Size(), ns = neighbor.Size();
+    bool probe = false;
+
+    if (spread && ts > ns) {
+        insert_first = &neighbor;
+        probe = true;
+    }
+
+    int slot = insert_first->TryInsertToBucket(std::forward<U>(key), std::forward<V>(value),
+                                                meta_hash, probe);
+
+    if (slot >= 0) {
+        return Iterator{PhysicalBid(insert_first - bucket_), uint8_t(slot)};
+    }
+
+    if (!spread) {
+        int slot =
+            neighbor.TryInsertToBucket(std::forward<U>(key), std::forward<V>(value), meta_hash, true);
+        if (slot >= 0) {
+        return Iterator{nid, uint8_t(slot)};
+        }
+    }
+
+    int displace_index = MoveToOther(true, nid, NextBid(nid));
+    if (displace_index >= 0) {
+        neighbor.Insert(displace_index, std::forward<U>(key), std::forward<V>(value), meta_hash, true);
+        on_move_cb(segment_id_, nid, NextBid(nid));
+        return Iterator{nid, uint8_t(displace_index)};
+    }
+
+    unsigned prev_idx = PrevBid(bid);
+    displace_index = MoveToOther(false, bid, prev_idx);
+    if (displace_index >= 0) {
+        target.Insert(displace_index, std::forward<U>(key), std::forward<V>(value), meta_hash, false);
+        on_move_cb(segment_id_, bid, prev_idx);
+        return Iterator{bid, uint8_t(displace_index)};
+    }
+
+    // we balance stash fill rate  by starting from y % STASH_BUCKET_NUM.
+    for (unsigned i = 0; i < kStashBucketNum; ++i) {
+        unsigned stash_pos = (bid + i) % kStashBucketNum;
+
+        int stash_slot = bucket_[kBucketNum + stash_pos].TryInsertToBucket(
+            std::forward<U>(key), std::forward<V>(value), meta_hash, false);
+        if (stash_slot >= 0) {
+        target.SetStashPtr(stash_pos, meta_hash, &neighbor);
+        return Iterator{PhysicalBid(kBucketNum + stash_pos), uint8_t(stash_slot)};
+        }
+    }
+
+    return Iterator{};
+}
+
+template <typename Key, typename Value, typename Policy>
+void Segment<Key, Value, Policy>::Delete(const Iterator& it, Hash_t key_hash) {
+    assert(it.found());
+
+    auto& b = bucket_[it.index];
+
+    if (it.index >= kBucketNum) {
+        RemoveStashReference(it.index - kBucketNum, key_hash);
+    }
+
+    b.Delete(it.slot);
+}
+
+template <typename Key, typename Value, typename Policy> 
+void Segment<Key, Value, Policy>::Clear() {
+    for (unsigned i = 0; i < kTotalBuckets; ++i) {
+        bucket_[i].Clear();
+        bucket_[i].ClearStashPtrs();
+    }
+}
+
 
 
 template <typename Key, typename Value, typename Policy>
@@ -415,6 +736,13 @@ void Segment<Key, Value, Policy>::TraverseAll(Cb&& cb) const {
         { cb(Iterator{i, slot}); });
     }
 }
+
+
+
+
+
+
+
 
 }
 }

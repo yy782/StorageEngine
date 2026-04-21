@@ -322,7 +322,7 @@ void DashTable<_Key, _Value, Policy>::Clear() {
         bucket_count_ = 0;
         while (src < segment_.size()) {
         auto* seg = segment_[src];
-        size_t next_src = NextSeg(src);  // must do before because NextSeg is dependent on seg.
+        size_t next_src = NextSeg(src);  
         if (dest < new_size) {
             seg->set_local_depth(initial_depth_);
             bucket_count_ += seg->num_buckets();
@@ -341,6 +341,120 @@ void DashTable<_Key, _Value, Policy>::Clear() {
     }
 }
 
+template <typename _Key, typename _Value, typename Policy>
+template <typename U, typename V, typename EvictionPolicy>
+auto DashTable<_Key, _Value, Policy>::InsertInternal(U&& key, V&& value, EvictionPolicy& ev,
+                                                     InsertMode mode) -> std::pair<iterator, bool> {
+    uint64_t key_hash = DoHash(key);
+    uint32_t target_seg_id = SegmentId(key_hash); // 使用哈希值的高 global_depth_ 位确定目标段
+
+    while (true) {
+        assert(target_seg_id < segment_.size());
+        SegmentType* target = segment_[target_seg_id];
+        __builtin_prefetch(target, 0, 1); // 预取指令 , 预热， !!!!!!!!!!!!!!!!!!!
+
+        typename SegmentType::Iterator it;
+        bool res = true;
+        unsigned num_buckets = target->num_buckets();
+
+        auto move_cb = [&](uint32_t segment_id, detail::PhysicalBid from, detail::PhysicalBid to) {
+            ev.OnMove(Cursor{global_depth_, segment_id, from}, Cursor{global_depth_, segment_id, to});
+        };
+
+        if (mode == InsertMode::kForceInsert) {
+            it = target->InsertUniq(std::forward<U>(key), std::forward<V>(value), key_hash, true, move_cb);  // 强制插入
+            res = it.found();
+        } else {
+            std::tie(it, res) = target->Insert(std::forward<U>(key), std::forward<V>(value), key_hash,
+                                            EqPred(key), move_cb); // 正常插入，会检查重复
+        }
+
+        if (res) {  // success
+            bucket_count_ += (target->num_buckets() - num_buckets);
+            ++size_;
+            return std::make_pair(iterator{this, target_seg_id, it.index, it.slot}, true);
+        }
+
+        /*duplicate insert, insertion failure*/
+        if (it.found()) {
+            return std::make_pair(iterator{this, target_seg_id, it.index, it.slot}, false);
+        }
+
+        bool consider_throw = true;
+
+        // At this point we must split the segment.
+        // try garbage collect or evict.
+        if constexpr (EvictionPolicy::can_evict || EvictionPolicy::can_gc) {
+            // Try gc.
+            uint8_t bid[HotBuckets::kRegularBuckets];
+            SegmentType::FillProbeArray(key_hash, bid);
+            HotBuckets hotspot;
+            hotspot.key_hash = key_hash;
+
+            for (unsigned j = 0; j < HotBuckets::kRegularBuckets; ++j) {
+                hotspot.probes.by_type.regular_buckets[j] = bucket_iterator{this, target_seg_id, bid[j]};
+            }
+
+            for (unsigned i = 0; i < SegmentType::kStashBucketNum; ++i) {
+                hotspot.probes.by_type.stash_buckets[i] =
+                    bucket_iterator{this, target_seg_id, uint8_t(Policy::kBucketNum + i), 0};
+            }
+            hotspot.num_buckets = HotBuckets::kNumBuckets;
+            if constexpr (EvictionPolicy::can_gc) { //  GC 回收（垃圾回收）
+                unsigned res = ev.GarbageCollect(hotspot, this);
+                garbage_collected_ += res;
+                if (res) {
+                    // We succeeded to gc. Lets continue with the momentum.
+                    // In terms of API abuse it's an awful hack, just to see if it works.
+                    /*unsigned start = (bid[HotBuckets::kNumBuckets - 1] + 1) % kLogicalBucketNum;
+                    for (unsigned i = 0; i < HotBuckets::kNumBuckets; ++i) {
+                        uint8_t id = (start + i) % kLogicalBucketNum;
+                        buckets.probes.arr[i] = bucket_iterator{this, target_seg_id, id};
+                    }
+                    garbage_collected_ += ev.GarbageCollect(buckets, this);
+                    */
+                continue;
+                }
+            }
+
+            auto hash_fn = [this](const auto& k) { return policy_.HashFn(k); };
+            unsigned moved = target->UnloadStash(hash_fn, move_cb); // 卸载 Stash
+            if (moved > 0) {
+                stash_unloaded_ += moved;
+                continue;
+            }
+
+            // We evict only if our policy says we can not grow
+            if constexpr (EvictionPolicy::can_evict) { //  驱逐 (Eviction)
+                bool can_grow = ev.CanGrow(*this);
+                if (can_grow) {
+                consider_throw = false;
+                } else {
+                unsigned res = ev.Evict(hotspot, this);
+                if (res)
+                    continue;
+                }
+            }
+        }
+
+        if (consider_throw && !ev.CanGrow(*this)) {
+            throw std::bad_alloc{};
+        }
+
+        // Split the segment.
+        if (target->local_depth() == global_depth_) { // 段分裂 (Split)
+            IncreaseDepth(global_depth_ + 1);
+
+            target_seg_id = SegmentId(key_hash);
+            assert(target_seg_id < segment_.size() && segment_[target_seg_id] == target);
+        }
+
+        ev.RecordSplit(target);
+        Split(target_seg_id, ev);
+    }
+
+    return std::make_pair(iterator{}, false);
+}
 
 }
 
