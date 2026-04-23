@@ -1,16 +1,16 @@
 
-
+#pragma once
 
 #include <thread>
 #include <vector>
 #include <functional>
-#include "EngineShardSet.hpp"
+#include "engine_shard_set.hpp"
 #include "cluster_support.hpp"
 #include "facade/redis_parser.hpp"
 #include "facade/reply_builder.hpp"
 #include "src/include/namespaces.hpp"
-
-
+#include "detail/tx_base.hpp"
+#include "db_slice.hpp"
 namespace dfly{
 
 class Common{
@@ -20,69 +20,57 @@ public:
 
     std::string HandleSet(const std::string& key, const std::string& value) {
         ShardId sid = KeySlot(std::string_view(key));
-        
-        // 使用 BlockingCounter 等待完成
-        util::fb2::BlockingCounter bc(1);
 
-        
-        shard_set->Add(sid, [&]() {
+        shard_set->Await(sid, [&]() {
             auto* shard = EngineShard::tlocal();
 
             db_context_.GetDbSlice(shard->shard_id())
-                                            .AddNew(db_cntext_, key, value, 0);
-            bc.Dec();
+                                            .AddNew(db_context_, std::string_view(key), 
+                                            CompactValue(std::string_view(value)), 0);
         });
         
-        bc.Wait();
         return BuildString("OK");
     }
 
     std::string HandleGet(const std::string& key) {
         ShardId sid = KeySlot(std::string_view(key));
         
-        std::optional<std::string> result;
-        util::fb2::BlockingCounter bc(1);
+        OpResult<DbSlice::ItAndUpdater> result;
         
-        shard_set->Add(sid, [&]() {
+        shard_set->Await(sid, [&]() {
             auto* shard = EngineShard::tlocal();
-            db_context_.GetDbSlice(shard->shard_id())
-                                            .AddOrFind(db_cntext_, key,  std::nullopt);
-            bc.Dec();
+            result=db_context_.GetDbSlice(shard->shard_id())
+                                            .AddOrFind(db_context_, std::string_view(key),  
+                                            std::nullopt);
         });
         
-        bc.Wait();
         
-        if (result.has_value()) {
-            return BuildBulkString(*result);
-        } else {
-            return BuildNull();
-        }
+        auto res=result.value();
+        return BuildBulkString(res.it_->second.ToString());
+
     }
 
     std::string HandleDel(const std::vector<std::string>& args) {
         std::atomic<int> deleted{0};
-        util::fb2::BlockingCounter bc(args.size() - 1);
         
         for (size_t i = 1; i < args.size(); i++) {
+            auto& key = args[i];
             ShardId sid = KeySlot(std::string_view(key));
-            shard_set->Add(sid, [&, key = args[i]]() {
+            shard_set->Await(sid, [&, key = args[i]]() {
                 auto* shard = EngineShard::tlocal();
                 auto it=db_context_.GetDbSlice(shard->shard_id())
-                                    .AddOrFind(db_cntext_, key,  std::nullopt)
+                                    .AddOrFind(db_context_, std::string_view(key),  std::nullopt)
                                     .value().it_;                    
                 db_context_.GetDbSlice(shard->shard_id()).Del(db_context_, it);
                 ++deleted;
-                                   
-                bc.Dec();
+                                
             });
         }
-        
-        bc.Wait();
         return BuildInteger(deleted.load());
     }
 
 private:
-    DbContext db_cntext_;
+    DbContext db_context_;
 
 
 };

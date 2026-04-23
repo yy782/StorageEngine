@@ -9,11 +9,10 @@
 #include "cluster_support.hpp"
 #include "facade/redis_parser.hpp"
 #include "facade/reply_builder.hpp"
-#include "src/include/namespaces.hpp"
-
+#include "namespaces.hpp"
 
 #include "dispatch_command.hpp"
-
+#include "common.hpp"
 using namespace boost;
 
 namespace dfly{
@@ -22,7 +21,7 @@ namespace dfly{
 class RedisSession : public std::enable_shared_from_this<RedisSession> {
 public:
     RedisSession(asio::ip::tcp::socket socket )
-        : socket_(std::move(socket)), common_({Namespaces->GetDefaultNamespace(), 0}) {}
+        : socket_(std::move(socket)), common_(DbContext{&namespaces->GetDefaultNamespace(), 0}) {}
     
     void Start() {
         DoRead();
@@ -58,9 +57,6 @@ private:
     }
     
    std::string ExecuteCommand(const std::vector<std::string>& args) {
-        if (args.empty()) {
-            return common_.BuildError("empty command");
-        }
         
         const std::string& cmd = args[0];
         
@@ -78,7 +74,7 @@ private:
             return common_.HandleDel(args);
         }
         
-        return common_.BuildError("unknown command '" + cmd + "'");
+        return {};
     }
     
 

@@ -1,5 +1,6 @@
 #include "db_slice.hpp"
 #include <optional>
+#include "engine_shard.hpp"
 namespace dfly{ 
 
 

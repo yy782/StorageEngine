@@ -10,7 +10,7 @@ using namespace cmn;
 class EngineShard;
 class DbSlice 
 {
-    
+public:    
     template <typename T> 
     class IteratorT {
     public:
@@ -101,7 +101,7 @@ private:
     void CreateDb(DbIndex index);
 
 
-
+    ShardId shard_id_;
     EngineShard* owner_;
     DbTableArray db_arr_;
 };

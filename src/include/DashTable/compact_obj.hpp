@@ -14,12 +14,6 @@ class RobjWrapper;
 }
 
 
-
-
-
-
-
-
 using CompactObjType = unsigned;
 
 constexpr CompactObjType kInvalidCompactObjType = std::numeric_limits<CompactObjType>::max();
@@ -64,7 +58,9 @@ public:
 
 
     void SetString(std::string_view str);
-
+    std::string ToString() const{
+        return u_.str_;
+    }
     CompactObjType ObjType() const;
 
 protected:
