@@ -15,7 +15,7 @@
 #include "command_id.hpp"
 #include "facade_types.hpp"
 
-struct hdr_histogram;
+
 
 namespace dfly {
 
@@ -45,11 +45,11 @@ enum CommandOpt : uint32_t { // 命令选项枚举
     IDEMPOTENT = 1U << 18, // 回调可以多次运行而不会损坏结果
 };
 
-enum class PubSubKind : uint8_t { 
-    REGULAR = 0, // 常规发布订阅
-    PATTERN = 1, // 模式发布订阅
-    SHARDED = 2 // 分片发布订阅
-};
+// enum class PubSubKind : uint8_t { 
+//     REGULAR = 0, // 常规发布订阅
+//     PATTERN = 1, // 模式发布订阅
+//     SHARDED = 2 // 分片发布订阅
+// };
 
 // // Commands controlling any multi command execution.
 // // They often need to be handled separately from regular commands in many contexts
@@ -139,62 +139,58 @@ public:
 };
 
 class CommandRegistry {
- public:
-  CommandRegistry();
+public:
+    CommandRegistry();
 
-  CommandRegistry& operator<<(CommandId cmd);
+    CommandRegistry& operator<<(CommandId cmd);
 
-  const CommandId* Find(std::string_view cmd) const {
-    auto it = cmd_map_.find(cmd);
-    return it == cmd_map_.end() ? nullptr : &it->second;
-  }
-
-  CommandId* Find(std::string_view cmd) {
-    auto it = cmd_map_.find(cmd);
-    return it == cmd_map_.end() ? nullptr : &it->second;
-  }
-
-  using TraverseCb = std::function<void(std::string_view, const CommandId&)>;
-
-  void Traverse(TraverseCb cb) {
-    for (const auto& k_v : cmd_map_) {
-      cb(k_v.first, k_v.second);
+    const CommandId* Find(std::string_view cmd) const {
+        auto it = cmd_map_.find(cmd);
+        return it == cmd_map_.end() ? nullptr : &it->second;
     }
-  }
 
-  void ResetCallStats(unsigned thread_index) {
-    for (auto& k_v : cmd_map_) {
-      k_v.second.ResetStats(thread_index);
+    CommandId* Find(std::string_view cmd) {
+        auto it = cmd_map_.find(cmd);
+        return it == cmd_map_.end() ? nullptr : &it->second;
     }
-  }
 
-  void MergeCallStats(unsigned thread_index,
-                      std::function<void(std::string_view, const CmdCallStats&)> cb) const {
-    for (const auto& k_v : cmd_map_) {
-      auto src = k_v.second.GetStats(thread_index);
-      if (src.first == 0)
-        continue;
-      cb(k_v.second.name(), src);
+    using TraverseCb = std::function<void(std::string_view, const CommandId&)>;
+
+    void Traverse(TraverseCb cb) {
+        for (const auto& k_v : cmd_map_) {
+          cb(k_v.first, k_v.second);
+        }
     }
-  }
 
-  void StartFamily(std::optional<uint32_t> acl_category = std::nullopt);
+    void ResetCallStats(unsigned thread_index) {
+        for (auto& k_v : cmd_map_) {
+          k_v.second.ResetStats(thread_index);
+        }
+    }
 
-  std::string_view RenamedOrOriginal(std::string_view orig) const;
+    void MergeCallStats(unsigned thread_index,
+                        std::function<void(std::string_view, const CmdCallStats&)> cb) const {
+        for (const auto& k_v : cmd_map_) {
+          auto src = k_v.second.GetStats(thread_index);
+          if (src.first == 0)
+              continue;
+          cb(k_v.second.name(), src);
+        }
+    }
 
-  using FamiliesVec = std::vector<std::vector<std::string>>;
-  FamiliesVec GetFamilies();
+    void StartFamily();
 
-  std::pair<const CommandId*, facade::ParsedArgs> FindExtended(facade::ParsedArgs args) const;
 
-  absl::flat_hash_map<std::string, hdr_histogram*> LatencyMap() const;
+    using FamiliesVec = std::vector<std::vector<std::string>>;
+    FamiliesVec GetFamilies();
+
+    std::pair<const CommandId*, facade::ParsedArgs> FindExtended(facade::ParsedArgs args) const;
 
  private:
     absl::flat_hash_map<std::string, CommandId> cmd_map_;
 
     FamiliesVec family_of_commands_;
     size_t bit_index_;
-    std::optional<uint32_t> acl_category_;  // category of family currently being built
 };
 
 }  // namespace dfly
