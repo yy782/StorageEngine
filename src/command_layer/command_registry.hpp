@@ -45,23 +45,10 @@ enum CommandOpt : uint32_t { // 命令选项枚举
     IDEMPOTENT = 1U << 18, // 回调可以多次运行而不会损坏结果
 };
 
-// enum class PubSubKind : uint8_t { 
-//     REGULAR = 0, // 常规发布订阅
-//     PATTERN = 1, // 模式发布订阅
-//     SHARDED = 2 // 分片发布订阅
-// };
-
-// // Commands controlling any multi command execution.
-// // They often need to be handled separately from regular commands in many contexts
-// enum class MultiControlKind : uint8_t {
-//   EVAL,  // EVAL, EVAL_RO, EVALSHA, EVALSHA_RO // 脚本执行命令
-//   EXEC,  // EXEC, MULTI, DISCARD // 事务控制命令
-// };
 
 };  // namespace CO
 
-// Per thread vector of command stats. Each entry is {cmd_calls, cmd_latency_agg in usec}.
-using CmdCallStats = std::pair<uint64_t, uint64_t>;
+
 
 class CommandId;
 class CommandContext;

@@ -21,6 +21,9 @@
 #include "engine_shard.hpp"
 #include "command_registry.hpp"
 #include "op_status.hpp"
+#include "conn_context2.hpp"
+#include "transaction.hpp"
+
 
 
 namespace dfly {
@@ -37,6 +40,9 @@ StringResult ReadString(DbIndex dbid, std::string_view key, const PrimeValue& pv
     return StringResult{pv.ToString()};
 }
 
+
+
+
 // Helper for performing SET operations with various options
 class SetCmd { // SET 命令处理器
 public:
@@ -51,9 +57,8 @@ public:
     };
 
     struct SetParams {
-        uint16_t flags = SET_ALWAYS;
-        uint64_t expire_after_ms = 0;  // Relative value based on now. 0 means no expiration.
-        optional<StringResult>* prev_val = nullptr;  // if set, previous value will be stored if found
+        uint16_t flags_ = SET_ALWAYS;
+        uint64_t expire_after_ms_ = 0;  // Relative value based on now. 0 means no expiration.
 
         constexpr bool IsConditionalSet() const {
             return false;
@@ -177,8 +182,7 @@ std::variant<SetCmd::SetParams, ErrorReply, NegativeExpire> ParseSetParams(
     SetCmd::SetParams sparams;
 
     while (parser.HasNext()) {
-        if (auto exp_type = parser.TryMapNext("EX");   // not same 
-            exp_type) {
+        if (parser.check("EX")) { // not same
             if (parser.HasError())
                 return ErrorReply{};
 
@@ -261,35 +265,22 @@ cmd::CmdR CmdSet(CmdArgList args, CommandContext* cmd_cntx) {
     auto [key, value] = parser.Next<string_view, string_view>();
     auto params_result = ParseSetParams(parser, cmd_cntx); // 解析 SET 命令的选项（如 EX 、 PX 、 NX 等）
 
-    if (holds_alternative<ErrorReply>(params_result))
-        co_return util::fb2::get<ErrorReply>(params_result);
 
-    auto& sparams = util::fb2::get<SetCmd::SetParams>(params_result); // 获取解析后的 SetParams 结构体
+    auto& sparams = std::get<SetCmd::SetParams>(params_result); // 获取解析后的 SetParams 结构体
 
     auto cb = [&](Transaction* t, EngineShard* shard) {
-        return SetCmd(t->GetOpArgs(shard), true).Set(sparams, key, value);
+        return SetCmd(t->GetOpArgs(shard)).Set(sparams, key, value);
     };
 
     OpStatus result = co_await cmd::SingleHop(cb);
-    auto* rb = cmd_cntx->rb();
-
-    switch (result) {
-        case OpStatus::WRONG_TYPE:
-            rb->SendError(kWrongTypeErr);  // TODO(vlad): use co_return after await?
-            co_return std::nullopt;
-        case OpStatus::OUT_OF_MEMORY:
-            rb->SendError(kOutOfMemory);
-            co_return std::nullopt;
-        default:
-            break;
-    };
 
 
+    auto* conn = cmd_cntx->conn_cntx()->owner_;
 
     if (result == OpStatus::OK) {
-        rb->SendOk();
+        conn->SendOk();
     } else {
-        static_cast<RedisReplyBuilder*>(rb)->SendNull();
+        conn->SendERROR();
     }
 
     co_return std::nullopt;
