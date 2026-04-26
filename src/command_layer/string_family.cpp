@@ -19,6 +19,9 @@
 
 #include "db_slice.hpp"
 #include "engine_shard.hpp"
+#include "command_registry.hpp"
+#include "op_status.hpp"
+
 
 namespace dfly {
 
@@ -26,33 +29,25 @@ namespace {
 
 using CI = CommandId;
 
-enum class ExpT { EX, PX, EXAT, PXAT };
-
 constexpr uint32_t kMaxStrLen = 1 << 28;
+ 
+using StringResult = std::string;
 
-template <typename T> 
-using StringResult = TResultOrT<std::string>;
-
-StringResult ReadString(DbIndex dbid, string_view key, const PrimeValue& pv, EngineShard* es) {
-    return pv.IsExternal() ? StringResult{ReadTieredString(dbid, key, pv, es->tiered_storage())}
-                          : StringResult{pv.ToString()};
+StringResult ReadString(DbIndex dbid, std::string_view key, const PrimeValue& pv, EngineShard* es) {
+    return StringResult{pv.ToString()};
 }
 
 // Helper for performing SET operations with various options
 class SetCmd { // SET 命令处理器
 public:
-    explicit SetCmd(OpArgs op_args, bool explicit_journal)
-        : op_args_(op_args), explicit_journal_{explicit_journal} {
+    explicit SetCmd(OpArgs op_args)
+        : op_args_(op_args) {
     }
 
     enum SetFlags {
         SET_ALWAYS = 0,
-        SET_IF_NOTEXIST = 1 << 0,     /* NX: Set if key not exists. */
-        SET_IF_EXISTS = 1 << 1,       /* XX: Set if key exists. */
         SET_KEEP_EXPIRE = 1 << 2,     /* KEEPTTL: Set and keep the ttl */
-        SET_GET = 1 << 3,             /* GET: Set if want to get key before set */
         SET_EXPIRE_AFTER_MS = 1 << 4, /* EX,PX,EXAT,PXAT: Expire after ms. */
-        SET_STICK = 1 << 5,           /* Set STICK flag */
     };
 
     struct SetParams {
@@ -61,11 +56,11 @@ public:
         optional<StringResult>* prev_val = nullptr;  // if set, previous value will be stored if found
 
         constexpr bool IsConditionalSet() const {
-            return flags & SET_IF_NOTEXIST || flags & SET_IF_EXISTS;
+            return false;
         }
     };
 
-  OpStatus Set(const SetParams& params, std::string_view key, std::string_view value);
+    OpStatus Set(const SetParams& params, std::string_view key, std::string_view value);
 
 private:
     OpStatus SetExisting(const SetParams& params, std::string_view value,
@@ -73,14 +68,6 @@ private:
 
     void AddNew(const SetParams& params, const DbSlice::Iterator& it, std::string_view key,
                 std::string_view value);
-
-    // Called at the end of AddNew of SetExisting
-    void PostEdit(const SetParams& params, std::string_view key, std::string_view value,
-                  PrimeValue* pv);
-
-    void RecordJournal(const SetParams& params, std::string_view key, std::string_view value);
-
-    OpStatus CachePrevIfNeeded(const SetParams& params, DbSlice::Iterator it);
 
     const OpArgs op_args_;
 
@@ -152,11 +139,11 @@ OpStatus SetCmd::SetExisting(const SetParams& params, string_view value,
 
     PrimeKey& key = it_upd->it->first;
     PrimeValue& prime_value = it_upd->it->second;
-    EngineShard* shard = op_args_.shard;
+    EngineShard* shard = op_args_.shard_;
 
     auto& db_slice = op_args_.GetDbSlice();
     uint64_t at_ms =
-        params.expire_after_ms ? params.expire_after_ms + op_args_.db_cntx.time_now_ms : 0;
+        params.expire_after_ms ? params.expire_after_ms + op_args_.db_cntx_.time_now_ms : 0;
 
     if (!(params.flags & SET_KEEP_EXPIRE)) {
         if (at_ms) {
@@ -190,29 +177,12 @@ std::variant<SetCmd::SetParams, ErrorReply, NegativeExpire> ParseSetParams(
     SetCmd::SetParams sparams;
 
     while (parser.HasNext()) {
-      if (auto exp_type = parser.TryMapNext("EX", ExpT::EX, "PX", ExpT::PX, "EXAT", ExpT::EXAT,
-                                            "PXAT", ExpT::PXAT);
-          exp_type) {
-        auto int_arg = parser.Next<int64_t>();
-        if (parser.HasError())
-          return ErrorReply{};
+        if (auto exp_type = parser.TryMapNext("EX");   // not same 
+            exp_type) {
+            if (parser.HasError())
+                return ErrorReply{};
 
-        sparams.flags |= SetCmd::SET_EXPIRE_AFTER_MS;
-
-        DbSlice::ExpireParams expiry{
-            .value = int_arg,
-            .unit = *exp_type == ExpT::PX || *exp_type == ExpT::PXAT ? TimeUnit::MSEC : TimeUnit::SEC,
-            .absolute = *exp_type == ExpT::EXAT || *exp_type == ExpT::PXAT,
-        };
-
-        int64_t now_ms = GetCurrentTimeMs();
-        auto [rel_ms, abs_ms] = expiry.Calculate(now_ms, false);
-
-        // Remove existed key if the key is expired already
-        if (rel_ms < 0)
-          return NegativeExpire{};
-
-        std::tie(sparams.expire_after_ms, ignore) = expiry.Calculate(now_ms, true);
+            sparams.flags |= SetCmd::SET_EXPIRE_AFTER_MS;
     }
     return sparams;
 }
@@ -294,7 +264,7 @@ cmd::CmdR CmdSet(CmdArgList args, CommandContext* cmd_cntx) {
     if (holds_alternative<ErrorReply>(params_result))
         co_return util::fb2::get<ErrorReply>(params_result);
 
-    auto& sparams = get<SetCmd::SetParams>(params_result); // 获取解析后的 SetParams 结构体
+    auto& sparams = util::fb2::get<SetCmd::SetParams>(params_result); // 获取解析后的 SetParams 结构体
 
     auto cb = [&](Transaction* t, EngineShard* shard) {
         return SetCmd(t->GetOpArgs(shard), true).Set(sparams, key, value);
