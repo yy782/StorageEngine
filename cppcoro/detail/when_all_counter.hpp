@@ -13,10 +13,9 @@
 #include <atomic>
 #include <cstdint>
 
-namespace yy
+namespace yy::detail
 {
-namespace detail
-{
+
 class when_all_counter
 {
 public:

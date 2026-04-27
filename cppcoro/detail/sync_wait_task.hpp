@@ -9,10 +9,9 @@
 #include <cassert>
 #include <exception>
 
-namespace yy
+namespace yy::detail
 {
-namespace detail
-{
+
 template<typename RESULT>
 class sync_wait_task;
 
@@ -226,8 +225,7 @@ sync_wait_task<void> make_sync_wait_task(AWAITABLE&& awaitable)
 {
   co_await std::forward<AWAITABLE>(awaitable);
 }
+}
 
-}
-}
 
 #endif //XYNET_SYNC_WAIT_TASK_H

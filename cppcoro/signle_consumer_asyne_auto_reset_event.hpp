@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cassert>
 
-namespace yy
+namespace cppcoro
 {
 	class single_consumer_async_auto_reset_event
 	{

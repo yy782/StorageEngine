@@ -7,13 +7,8 @@
 #include <coroutine>
 #include <type_traits>
 #include <stdexcept>
-namespace yy
-{
-namespace net
-{
+namespace cppcoro::detail{
 
-
-namespace detail {
 struct void_value {};
 // 检测 await_suspend 返回值是否合法
 template<typename Return>
@@ -24,7 +19,6 @@ concept valid_await_suspend_return =
 
 
 
-// 1. Awaiter 概念：检查三个必需方法
 template<typename T>
 concept Awaiter = requires(T&& value, std::coroutine_handle<> h) {
     // await_ready 必须返回 bool
@@ -39,7 +33,7 @@ concept Awaiter = requires(T&& value, std::coroutine_handle<> h) {
 
 // 2. 获取 Awaiter 的重载（用概念替代 SFINAE）
 
-// 重载1：有 operator co_await
+
 template<typename T>
 requires requires(T&& value) { static_cast<T&&>(value).operator co_await(); }
 auto get_awaiter_impl(T&& value, int)
@@ -49,7 +43,7 @@ auto get_awaiter_impl(T&& value, int)
     return static_cast<T&&>(value).operator co_await();
 }
 
-// 重载2：有全局 operator co_await
+
 template<typename T>
 requires requires(T&& value) { operator co_await(static_cast<T&&>(value)); }
 auto get_awaiter_impl(T&& value, long)
@@ -59,7 +53,7 @@ auto get_awaiter_impl(T&& value, long)
     return operator co_await(static_cast<T&&>(value));
 }
 
-// 重载3：本身已经是 Awaiter
+
 template<typename T>
 requires Awaiter<T&&>
 auto get_awaiter_impl(T&& value, ...) noexcept
@@ -68,7 +62,7 @@ auto get_awaiter_impl(T&& value, ...) noexcept
     return static_cast<T&&>(value);
 }
 
-// 3. 主函数
+
 template<typename T>
 auto get_awaiter(T&& value)
     noexcept(noexcept(get_awaiter_impl(static_cast<T&&>(value), 123)))
@@ -124,7 +118,5 @@ struct is_awaitable<T, std::void_t<decltype(get_awaiter(std::declval<T>()))>>
 template<typename T>
 constexpr bool is_awaitable_v = is_awaitable<T>::value;
 } // namespace detail
-}
-}
 
 #endif

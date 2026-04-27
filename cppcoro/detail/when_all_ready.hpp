@@ -5,15 +5,15 @@
 #include "compilerConfig.hpp"
 #include "awaiter_impl.hpp"
 #include "when_all_ready_awaitable.hpp"
-#include <xynet/coroutine/detail/when_all_task.h>
-#include <xynet/coroutine/detail/unwrap_reference.h>
+#include "when_all_task.hpp"
+#include "unwrap_reference.hpp"
 
 #include <tuple>
 #include <utility>
 #include <vector>
 #include <type_traits>
 
-namespace xynet
+namespace cppcoro
 {
 template<
   typename... AWAITABLES,

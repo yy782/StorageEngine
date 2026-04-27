@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <exception>
 
-namespace yy
+namespace cppcoro
 {
 	template<typename FUNC>
 	class scoped_lambda

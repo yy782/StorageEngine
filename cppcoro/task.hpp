@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <cassert>
 #include <coroutine>
-namespace yy
-{
+
 namespace cppcoro
 {
 template<typename T> class task;
@@ -474,7 +473,7 @@ auto make_task(AWAITABLE awaitable)
 }
 }
 }
-}
+
 
 #endif //XYNET_COROUTINE_TASK_HPP
 

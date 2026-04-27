@@ -8,7 +8,7 @@
 #include <type_traits>
 #include <functional>
 
-namespace yy
+namespace cppcoro
 {
 namespace detail
 {

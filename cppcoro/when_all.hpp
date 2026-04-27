@@ -19,7 +19,7 @@
 #include <type_traits>
 #include <cassert>
 
-namespace xynet
+namespace cppcoro
 {
 //////////
 // Variadic when_all()

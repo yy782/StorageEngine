@@ -7,16 +7,16 @@
 #include "detail/awaiter_impl.hpp"
 
 
-#include "detail/when_all_ready_awaitable.h"
-#include "detail/when_all_task.h"
-#include "detail/unwrap_reference.h"
+#include "detail/when_all_ready_awaitable.hpp"
+#include "detail/when_all_task.hpp"
+#include "detail/unwrap_reference.hpp"
 
 #include <tuple>
 #include <utility>
 #include <vector>
 #include <type_traits>
 
-namespace yy
+namespace cppcoro
 {
 template<
   typename... AWAITABLES,

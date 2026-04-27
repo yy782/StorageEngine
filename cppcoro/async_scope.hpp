@@ -9,7 +9,7 @@
 #include <type_traits>
 #include <cassert>
 
-namespace yy
+namespace cppcoro
 {
 	class async_scope
 	{

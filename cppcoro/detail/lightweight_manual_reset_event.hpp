@@ -14,7 +14,7 @@
 #include <climits>
 #include <cassert>
 
-namespace yy
+namespace cppcoro
 {
 
 namespace

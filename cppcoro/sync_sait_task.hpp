@@ -11,9 +11,7 @@
 #include <cassert>
 #include <exception>
 
-namespace yy
-{
-namespace detail
+namespace cppcoro::detail
 {
 template<typename RESULT>
 class sync_wait_task;
@@ -228,6 +226,6 @@ sync_wait_task<void> make_sync_wait_task(AWAITABLE&& awaitable)
 }
 #endif
 }
-}
+
 
 #endif //XYNET_SYNC_WAIT_TASK_H

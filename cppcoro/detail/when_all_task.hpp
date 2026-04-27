@@ -7,10 +7,9 @@
 #include <coroutine>
 #include <cassert>
 
-namespace yy
+namespace yy::detail
 {
-namespace detail
-{
+
 template<typename TASK_CONTAINER>
 class when_all_ready_awaitable;
 
@@ -291,7 +290,6 @@ template<
 when_all_task<void> make_when_all_task(std::reference_wrapper<AWAITABLE> awaitable)
 {
   co_await awaitable.get();
-}
 }
 }
 

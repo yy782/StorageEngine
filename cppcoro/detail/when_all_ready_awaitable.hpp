@@ -32,10 +32,9 @@
 #include <coroutine>
 #include <tuple>
 
-namespace yy
+namespace yy::detail
 {
-namespace detail
-{
+
 template<typename TASK_CONTAINER>
 class when_all_ready_awaitable;
 
@@ -275,6 +274,6 @@ private:
 
 };
 }
-}
+
 
 #endif //XYNET_WHEN_ALL_READY_AWAITABLE_H
