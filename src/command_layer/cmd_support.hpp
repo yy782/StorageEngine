@@ -68,12 +68,12 @@ private:
     void await_suspend(
       std::coroutine_handle<Coro> coro) noexcept
     {
-      tx->Execute(coro, *this); // tx执行完恢复权柄
+      cmd_cntx_->tx()->Execute(coro, *this); // tx执行完恢复权柄
     }
 
-    OpStatus operator()(Transaction* tx, EngineShard* es) const {
+    void operator()(Transaction* tx, EngineShard* es) const {
       result = callback(tx, es);
-      return result.status();
+      return;
     }
 
     RT&& await_resume() noexcept {

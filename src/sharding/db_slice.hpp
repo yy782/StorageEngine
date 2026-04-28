@@ -65,6 +65,15 @@ public:
     DbSlice(const DbSlice&) = delete;
     void operator=(const DbSlice&) = delete;
 
+
+    EngineShard* shard_owner() const {
+        return owner_;
+    }
+
+    ShardId shard_id() const {
+        return shard_id_;
+    }
+
     void PerformDeletionAtomic(const Iterator& del_it, DbTable* table, bool async = false); // 实际的删除函数
 
     ItAndUpdater FindMutable(const Context& cntx, std::string_view key); // Iterator it：指向 key 的迭代器（可修改）
@@ -82,12 +91,14 @@ public:
 
 
 
-  void AddExpire(DbIndex db_ind, const Iterator& main_it, uint64_t at);
+    void AddExpire(DbIndex db_ind, const Iterator& main_it, uint64_t at);
 
-  bool RemoveExpire(DbIndex db_ind, const Iterator& main_it);
+    bool RemoveExpire(DbIndex db_ind, const Iterator& main_it);
     Iterator ExpireIfNeeded(const Context& cntx, Iterator it) const;
     PrimeIterator ExpireIfNeeded(const Context& cntx, PrimeIterator it) const;    
     void ExpireAllIfNeeded();
+
+
 
 
 private:
