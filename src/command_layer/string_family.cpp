@@ -143,7 +143,7 @@ std::variant<SetCmd::SetParams, ErrorReply, NegativeExpire> ParseSetParams(
     return sparams;
 }
 
-using CoroTask = cppcoro::task<void, cmd::Coro>;
+
 
 
 CoroTask CmdSet(CmdArgList args, CommandContext* cmd_cntx) {
