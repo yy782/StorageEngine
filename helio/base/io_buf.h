@@ -3,135 +3,193 @@
 //
 #pragma once
 
-#include <absl/numeric/bits.h>
-#include <absl/types/span.h>
 
 #include <cstring>
+#include <vector>
+
 
 namespace base {
 
-// Generic buffer for reads and writes.
-// Write directly to AppendBuffer() and mark bytes as written with CommitWrite.
-// Read from InputBuffer() and mark bytes as read with ConsumeInput.
-class IoBuf {
- public:
-  using Bytes = absl::Span<uint8_t>;
-  using ConstBytes = absl::Span<const uint8_t>;
+class TcpBuffer;
+using IoBuf = TcpBuffer;
 
-  explicit IoBuf(size_t capacity = 256) {
-    assert(capacity > 0);
-    Reserve(capacity);
-  }
 
-  IoBuf(size_t capacity, std::align_val_t align) : alignment_(size_t(align)) {
-    Reserve(capacity);
-  }
+class TcpBuffer // TODO 不能拷贝
+{
+public: 
 
-  IoBuf(const IoBuf&) = delete;
-  IoBuf& operator=(const IoBuf&) = delete;
+    typedef std::vector<char> CharContainer;
 
-  IoBuf(IoBuf&& other) {
-    Swap(other);
-  }
-  IoBuf& operator=(IoBuf&& other) {
-    Swap(other);
-    return *this;
-  }
-
-  ~IoBuf();
-
-  // ============== INPUT =======================
-
-  size_t InputLen() const {
-    return size_ - offs_;
-  }
-
-  ConstBytes InputBuffer() const {
-    return ConstBytes{buf_ + offs_, InputLen()};
-  }
-
-  Bytes InputBuffer() {
-    return Bytes{buf_ + offs_, InputLen()};
-  }
-
-  // Mark num_read bytes from the input as read.
-  void ConsumeInput(size_t num_read);
-
-  // Write num_write bytes to dest and mark them as read.
-  void ReadAndConsume(size_t num_write, void* dest);
-
-  // ============== OUTPUT ============
-
-  size_t AppendLen() const {
-    return capacity_ - size_;
-  }
-
-  Bytes AppendBuffer() {
-    return Bytes{buf_ + size_, AppendLen()};
-  }
-
-  // Mark num_written bytes as written and transform them to input.
-  void CommitWrite(size_t num_written) {
-    size_ += num_written;
-  }
-
-  // Copy num_copy bytes from source to append buffer and mark them as written.
-  // Ensures append buffer is large enough.
-  void WriteAndCommit(const void* source, size_t num_copy);
-
-  // Ensure required append buffer size.
-  void EnsureCapacity(size_t sz) {
-    Reserve(size_ + sz);
-  }
-
-  // Reserve by whole buffer size.
-  // Use EnsureCapacity instead for resizing only by desired append buffer size.
-  void Reserve(size_t full_size);
-
-  // ============== GENERIC ===========
-
-  // Clear all input.
-  void Clear() {
-    size_ = 0;
-    offs_ = 0;
-  }
-
-  // Return capacity of whole buffer.
-  size_t Capacity() const {
-    return capacity_;
-  }
-
-  struct MemoryUsage {
-    size_t consumed = 0;
-    size_t input_length = 0;
-    size_t append_length = 0;
-
-    size_t GetTotalSize() const { return consumed + input_length + append_length; }
-
-    MemoryUsage& operator+=(const MemoryUsage& o) {
-      consumed += o.consumed;
-      input_length += o.input_length;
-      append_length += o.append_length;
-      return *this;
+    explicit TcpBuffer(size_t initial_size=1024,size_t prepend_size=8);
+    void reset()///////////////////////////////////////////////////////////////////
+    {
+        read_index_=8;
+        write_index_=8;
     }
-  };
 
-  MemoryUsage GetMemoryUsage() const {
-    return {
-      .consumed = offs_,
-      .input_length = InputLen(),
-      .append_length = AppendLen(),
+    ~TcpBuffer()=default;
+    
+    void swap(TcpBuffer& other) noexcept;
+    
+    template<typename T>
+    void append(T&& value);
+    
+
+    void append(const char* data,size_t size);
+    
+
+    void append(const char*){assert(false&&"请指明长度");}
+    
+
+    ssize_t appendFormFd(int fd);
+    
+
+    template<typename T>
+    TcpBuffer& FluentAppend(T&& value);
+    
+
+    TcpBuffer& FluentAppend(const char* data,size_t size);
+    
+
+    TcpBuffer& FluentAppend(const char*)
+    {
+        assert(false&&"请指明长度");
+        return *this;
     };
-  }
+    
+    void consume(size_t size);
 
- private:
-  void Swap(IoBuf& other);
+    char* BeginWrite();
+    
 
-  uint8_t* buf_ = nullptr;
-  size_t offs_ = 0;
-  size_t size_ = 0;
-  size_t alignment_ = 8;
-  size_t capacity_ = 0;
+    char* retrieve(size_t size);
+
+    char* retrieveAll();
+    
+    std::string retrieveAllToString();
+    
+    const char* peek()const noexcept{return begin()+read_index_;}
+    
+    stringPiece readView()const noexcept{return stringPiece(peek(),readable_size()+1);}
+    
+    char* ModifyData(){return begin()+read_index_;}
+
+    void shrink(size_t reserve);
+
+    size_t readable_size()const noexcept{return write_index_-read_index_;}
+    
+    size_t writable_size()const noexcept{return buffer_.size()-write_index_;}
+    
+    size_t prependable_size()const noexcept{return read_index_;}
+
+    char* findBorder(const char* border) noexcept
+    {
+        return std::search(begin_read(),begin_write(),border,border+strlen(border));
+    }
+    
+    char* findBorder(const char* border,size_t size) noexcept
+    {
+        return std::search(begin_read(),begin_write(),border,border+size);
+    }
+
+    char* findBorder(const char* border,size_t size,size_t& len) noexcept
+    {
+        char* last=findBorder(border,size);
+        len=last-begin_read();
+        return last;
+    }
+    
+    void prepend(const char* data,size_t size) noexcept
+    {
+        assert(size <= prependable_size());
+        read_index_ -= size;
+        std::copy(data, data + size, begin_read());
+    }
+    
+    void prepend(const void* data,size_t size) noexcept
+    {
+        prepend(static_cast<const char*>(data), size);
+    }
+
+    void ensureWritableBytes(size_t len);
+    
+    void hasWritten(size_t len);
+    
+    void unwrite(size_t len);
+
+    void clear() noexcept
+    {
+        read_index_=8;
+        write_index_=8;
+    }
+private:
+    void move_write_index(size_t size);
+    
+    void move_read_index(size_t size);
+    
+    void check_index_validity()const;
+    
+    void ensure_appendable(size_t size);
+
+    char* begin_write(){return begin()+write_index_;}
+    
+    char* begin_read(){return begin()+read_index_;}
+    
+    char* begin(){return &*buffer_.begin();}
+    
+    const char* begin()const{return &*buffer_.begin();}
+    
+    void expend(size_t size);
+    
+    void reuse_prependable_space();
+
+    void appendImp(const char* data,size_t size);
+
+    CharContainer buffer_;// inOne
+    
+    const size_t prepend_size_;
+    
+    size_t read_index_;
+    
+
+    size_t write_index_;
+    
+
+
+
 };
+/**
+ * @brief 添加数据
+ * 
+ * @tparam T 数据类型
+ * @param value 要添加的数据
+ */
+template<typename T>
+void TcpBuffer::append(T&& value)
+{
+    using DecayedT = std::decay_t<T>;
+    static_assert(!std::is_same_v<DecayedT,std::string>);
+    if constexpr(std::is_same_v<DecayedT,stringPiece>)
+    {
+        appendImp(value.data(),value.size());
+    }
+    else
+        appendImp(reinterpret_cast<const char*>(&value), sizeof(T));
+    
+}
+
+/**
+ * @brief 流式添加数据
+ * 
+ * @tparam T 数据类型
+ * @param value 要添加的数据
+ * @return TcpBuffer& 缓冲区引用
+ */
+template<typename T>
+TcpBuffer& TcpBuffer::FluentAppend(T&& value)
+{
+    append(std::forward<T>(value));
+    return *this;
+}
 
 }  // namespace base

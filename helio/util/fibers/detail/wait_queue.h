@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
+#include <utils/function_ref.hpp>
 
 #include <boost/intrusive/list.hpp>
 #include <functional>
@@ -16,21 +16,6 @@ namespace detail {
 
 class FiberInterface;
 
-// Waiter represents a pending notification interest in a WaitQueue. It encapsulates
-// either a suspended FiberInterface (to be resumed) or a synchronous Callback (to be
-// executed). Waiters use intrusive list linkage to avoid allocations during synchronization.
-//
-// Subscription modes:
-// - One-shot (default): Waiter is unlinked before notification. Standard behavior for
-//   mutexes and condition variables where each waiter expects exactly one wakeup.
-// - Persistent: Waiter remains linked after notification. Used for long-lived observers
-//   that need to receive multiple events (e.g., backpressure bridges, event multiplexers).
-//
-// Invariant for persistent waiters:
-// Persistent waiters are intended for broadcast scenarios (NotifyAll). A persistent waiter
-// at the front of the queue will consume every NotifyOne() call, starving any waiters queued behind
-// it. Do NOT mix persistent and one-shot waiters on the same WaitQueue if NotifyOne() will be used.
-// Use separate WaitQueues or only use NotifyAll() for persistent subscriptions.
 class Waiter {
   friend class FiberInterface;
   explicit Waiter(FiberInterface* cntx) : cntx_(cntx) {

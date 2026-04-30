@@ -4,12 +4,6 @@
 
 #include "base/init.h"
 
-#ifdef USE_ABSL_LOG
-#include <absl/log/initialize.h>
-#include <absl/log/log_sink_registry.h>
-
-#include "base/file_log_sink.h"
-#endif
 
 #include <absl/base/internal/cycleclock.h>
 #include <absl/debugging/failure_signal_handler.h>
@@ -19,7 +13,6 @@
 #include <atomic>
 #include <exception>
 
-#include "base/cycle_clock.h"
 #include "base/logging.h"
 
 // This overrides glibc's default assert handler in debug builds so

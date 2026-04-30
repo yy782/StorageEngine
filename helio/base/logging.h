@@ -4,69 +4,10 @@
 
 #pragma once
 
-#ifdef USE_ABSL_LOG
-
-#include <vector>
-#include <string>
-#include <absl/log/absl_check.h>
-#include <absl/log/absl_log.h>
-#include <absl/log/globals.h>
-#include <absl/log/log_sink_registry.h>
-#include <absl/log/vlog_is_on.h>
-
-#define CHECK ABSL_CHECK
-#define CHECK_GT ABSL_CHECK_GT
-#define CHECK_LT ABSL_CHECK_LT
-#define CHECK_EQ ABSL_CHECK_EQ
-#define CHECK_NE ABSL_CHECK_NE
-#define CHECK_GE ABSL_CHECK_GE
-#define CHECK_LE ABSL_CHECK_LE
-
-#define DCHECK ABSL_DCHECK
-#define DCHECK_GT ABSL_DCHECK_GT
-#define DCHECK_LT ABSL_DCHECK_LT
-#define DCHECK_EQ ABSL_DCHECK_EQ
-#define DCHECK_NE ABSL_DCHECK_NE
-#define DCHECK_GE ABSL_DCHECK_GE
-#define DCHECK_LE ABSL_DCHECK_LE
-
-#define DVLOG ABSL_DVLOG
-#define VLOG ABSL_VLOG
-#define LOG ABSL_LOG
-#define LOG_IF ABSL_LOG_IF
-#define LOG_FIRST_N ABSL_LOG_FIRST_N
-#define VLOG_IF(verboselevel, condition) \
-  ABSL_LOG_IF(INFO, (condition) && ABSL_VLOG_IS_ON(verboselevel))
-
-#define LOG_EVERY_N(severity, n) ABSL_LOG_EVERY_N(severity, n)
-#define LOG_EVERY_T(severity, t) ABSL_LOG_EVERY_N_SEC(severity, t)
-#define DLOG ABSL_DLOG
-#define DLOG_IF ABSL_DLOG_IF
-
-template <typename T> T* CHECK_NOTNULL(T* t) {
-  CHECK(t);
-  return t;
-}
-
-namespace base {
-class ConsoleLogSink : public absl::LogSink {
- public:
-  void Send(const absl::LogEntry& entry) override;
-  static ConsoleLogSink* instance();
-};
-
-std::vector<std::string> GetLoggingDirectories();
-
-}  // namespace base
-
-#define CONSOLE_INFO ABSL_LOG(INFO).ToSinkAlso(base::ConsoleLogSink::instance())
-
-#else
 #include <glog/logging.h>
 
 #define CONSOLE_INFO LOG_TO_SINK(base::ConsoleLogSink::instance(), INFO)
 
-#endif
 
 #include <string>
 
@@ -78,17 +19,6 @@ std::string ProgramBaseName();
 
 std::string MyUserName();
 
-#ifdef USE_ABSL_LOG
-
-inline void FlushLogs() {
-  absl::FlushLogSinks();
-}
-
-inline int SetVLogLevel(std::string_view module_pattern, int log_level) {
-  return absl::SetVLogLevel(module_pattern, log_level);
-}
-
-#else
 
 inline void FlushLogs() {
   google::FlushLogFiles(google::INFO);
@@ -110,7 +40,7 @@ class ConsoleLogSink : public google::LogSink {
 
   static ConsoleLogSink* instance();
 };
-#endif
+
 extern const char* kProgramName;
 
 }  // namespace base

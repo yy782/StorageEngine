@@ -4,7 +4,6 @@
 
 #include "util/accept_server.h"
 
-#include <absl/strings/numbers.h>
 #include <netdb.h>
 #include <signal.h>
 

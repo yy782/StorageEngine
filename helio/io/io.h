@@ -4,19 +4,17 @@
 
 #pragma once
 
-#include <absl/types/span.h>
+#include <span.h>
 #include <sys/uio.h>
 
 #include <string_view>
 
-//include "nonstd/expected.hpp"
-#include "../_deps/expected-src/include/nonstd/expected.hpp"
 #include "io/io_buf.h"
 
 namespace io {
 
-using MutableBytes = absl::Span<uint8_t>;
-using Bytes = absl::Span<const uint8_t>;
+using MutableBytes = std::span<uint8_t>;
+using Bytes = std::span<const uint8_t>;
 
 inline Bytes Buffer(std::string_view str) {
   return Bytes{reinterpret_cast<const uint8_t*>(str.data()), str.size()};
@@ -35,7 +33,8 @@ inline std::string_view View(MutableBytes bytes) {
 }
 
 /// Similar to Rust std::io::Result.
-template <typename T, typename E = ::std::error_code> using Result = nonstd::expected<T, E>;
+template <typename T, typename E = ::std::error_code> 
+using Result = nonstd::expected<T, E>;
 
 /**
  * @brief The Source class allows reading bytes from a source. Similar to Rust io::Read trait.
