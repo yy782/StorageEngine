@@ -7,7 +7,7 @@
 #include <liburing.h>
 #include <pthread.h>
 
-#include "base/segment_pool.h"
+#include "base/segment_pool.h" // 内存分配器
 #include "util/fibers/proactor_base.h"
 #include "util/fibers/submit_entry.h"
 #include "util/fibers/uring_types.h"
@@ -50,15 +50,7 @@ class UringProactor : public ProactorBase {
       fu2::function_base<true /*owns*/, false /*non-copyable*/, fu2::capacity_fixed<16, 8>,
                          false /* non-throwing*/, false /* strong exceptions guarantees*/,
                          void(detail::FiberInterface*, IoResult, uint32_t, uint32_t)>;
-  /**
-   * @brief Get the Submit Entry object in order to issue I/O request.
-   *
-   * @param cb - completion callback.
-   * @param submit_type - user tag to be supplied to the completion callback. This is useful to
-   *                      distinguish between different CQEs when debugging problems.
-   * @return SubmitEntry with initialized userdata.
-   *
-   */
+
   SubmitEntry GetSubmitEntry(CbType cb, uint32_t submit_tag = 0);
 
   // Returns number of entries available for submitting to io_uring.
@@ -196,12 +188,12 @@ class UringProactor : public ProactorBase {
 
   io_uring ring_;
 
-  uint8_t msgring_supported_f_ : 1;
-  uint8_t poll_first_ : 1;
-  uint8_t buf_ring_f_ : 1;
-  uint8_t bundle_f_ : 1;
-  uint8_t incremental_buf_ring_f_ : 1;
-  uint8_t sync_cancel_f_ : 1;
+  uint8_t msgring_supported_f_ : 1; // 检测特性：IORING_OP_MSG_RING 操作码
+  uint8_t poll_first_ : 1; // 是否使用 IORING_SETUP_SQPOLL 标志
+  uint8_t buf_ring_f_ : 1; // io_uring_register_buf_ring 支持
+  uint8_t bundle_f_ : 1; // 支持批量接收/发送多个请求
+  uint8_t incremental_buf_ring_f_ : 1; // 检测特性：增量缓冲区模式
+  uint8_t sync_cancel_f_ : 1; // IORING_ASYNC_CANCEL 标志支持
   uint8_t : 2;
 
   EventCount sqe_avail_;

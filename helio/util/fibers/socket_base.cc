@@ -2,7 +2,7 @@
 // See LICENSE for licensing terms.
 //
 
-#include "util/fiber_socket_base.h"
+#include "util/socket_base.h"
 
 #include <netinet/in.h>
 #include <poll.h>
@@ -19,12 +19,12 @@ namespace util {
 
 using namespace std;
 using io::Result;
-using nonstd::make_unexpected;
+using utils::make_unexpected;
 
 // Return true if error occurred and ec is set, false otherwise.
-bool posix_err_wrap(ssize_t res, FiberSocketBase::error_code* ec) {
+bool posix_err_wrap(ssize_t res, SocketBase::error_code* ec) {
   if (res == -1) {
-    *ec = FiberSocketBase::error_code(errno, std::system_category());
+    *ec = SocketBase::error_code(errno, std::system_category());
     return true;
   } else if (res < 0) {
     LOG(WARNING) << "Bad posix error " << res;
@@ -32,11 +32,11 @@ bool posix_err_wrap(ssize_t res, FiberSocketBase::error_code* ec) {
   return false;
 }
 
-nonstd::unexpected<error_code> MakeUnexpected(std::errc code) {
+utils::unexpected<error_code> MakeUnexpected(std::errc code) {
   return make_unexpected(make_error_code(code));
 }
 
-void FiberSocketBase::SetProactor(ProactorBase* p) {
+void SocketBase::SetProactor(ProactorBase* p) {
   if (p == proactor_)
     return;
 
@@ -49,7 +49,7 @@ void FiberSocketBase::SetProactor(ProactorBase* p) {
     OnSetProactor();
 }
 
-Result<size_t> FiberSocketBase::Recv(const iovec* ptr, size_t len) {
+Result<size_t> SocketBase::Recv(const iovec* ptr, size_t len) {
   CHECK_GT(len, 0U);
 
   msghdr msg;
@@ -73,23 +73,13 @@ LinuxSocketBase::~LinuxSocketBase() {
 }
 
 error_code LinuxSocketBase::Create(unsigned short pfamily) {
-  DCHECK_EQ(fd_, -1);
 
   error_code ec;
-#ifdef __linux__
   constexpr auto kMask = SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC;
-#else
-  constexpr auto kMask = SOCK_STREAM;
-#endif
 
   int fd = socket(pfamily, kMask, 0);
   if (posix_err_wrap(fd, &ec))
     return ec;
-
-#ifndef __linux__
-  SetNonBlocking(fd);
-  SetCloexec(fd);
-#endif
   fd_ = fd << kFdShift;
   if (pfamily == AF_UNIX) {
     fd_ |= IS_UDS;

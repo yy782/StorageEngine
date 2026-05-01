@@ -18,33 +18,33 @@ namespace fb2 {
 class ProactorBase;
 }  // namespace fb2
 
-class FiberSocketBase : public io::Sink,
+class SocketBase : public io::Sink,
                         public io::AsyncSink,
                         public io::Source,
                         public io::AsyncSource {
-  FiberSocketBase(const FiberSocketBase&) = delete;
-  void operator=(const FiberSocketBase&) = delete;
-  FiberSocketBase(FiberSocketBase&& other) = delete;
-  FiberSocketBase& operator=(FiberSocketBase&& other) = delete;
+  SocketBase(const SocketBase&) = delete;
+  void operator=(const SocketBase&) = delete;
+  SocketBase(SocketBase&& other) = delete;
+  SocketBase& operator=(SocketBase&& other) = delete;
 
  protected:
-  explicit FiberSocketBase(fb2::ProactorBase* pb) : proactor_(pb) {
+  explicit SocketBase(fb2::ProactorBase* pb) : proactor_(pb) {
   }
 
  public:
   using endpoint_type = ::boost::asio::ip::tcp::endpoint;
   using error_code = std::error_code;
-  using AcceptResult = ::io::Result<FiberSocketBase*>;
+  using AcceptResult = ::io::Result<SocketBase*>;
   using ProactorBase = fb2::ProactorBase;
 
-  ABSL_MUST_USE_RESULT virtual error_code Shutdown(int how) = 0;
+  [[nodiscard]] virtual error_code Shutdown(int how) = 0;
 
-  ABSL_MUST_USE_RESULT virtual AcceptResult Accept() = 0;
+  [[nodiscard]] virtual AcceptResult Accept() = 0;
 
-  ABSL_MUST_USE_RESULT virtual error_code Connect(const endpoint_type& ep,
+  [[nodiscard]] virtual error_code Connect(const endpoint_type& ep,
                                                   std::function<void(int)> on_pre_connect = {}) = 0;
 
-  ABSL_MUST_USE_RESULT virtual error_code Close() = 0;
+  [[nodiscard]] virtual error_code Close() = 0;
 
   virtual bool IsOpen() const = 0;
 
@@ -60,20 +60,23 @@ class FiberSocketBase : public io::Sink,
 
   virtual ::io::Result<size_t> Recv(const io::MutableBytes& mb, int flags = 0) = 0;
 
-  enum ProvidedType : uint8_t { kHeapType = 1, kBufRingType = 2};
+  enum ProvidedType : uint8_t { 
+    kHeapType = 1, // 堆内存类型
+    kBufRingType = 2 // 缓冲区环类型
+  };
 
   struct ProvidedBuffer {
     union {
-      uint8_t* start;
+      uint8_t* start; // 堆内存模式的指针
       struct {
-        uint16_t buf_id;
-        uint16_t buf_pos;
+        uint16_t buf_id; // 缓冲区环的 ID
+        uint16_t buf_pos; // 缓冲区内的位置
       };
     };
 
-    int res_len;   // positive len, negative errno.
-    uint32_t allocated;
-    ProvidedType type;   // Buffer type.
+    int res_len;   // positive len, negative errno.// 正数：读取长度，负数：错误码
+    uint32_t allocated; // 分配的缓冲区大小
+    ProvidedType type;   // Buffer type. // 缓冲区类型（kHeapType/kBufRingType）
 
     void SetError(uint16_t err) {
       res_len = -int(err);
@@ -106,8 +109,8 @@ class FiberSocketBase : public io::Sink,
   using AsyncSource::AsyncRead;
   using AsyncSource::AsyncReadSome;
 
-  virtual endpoint_type LocalEndpoint() const = 0;
-  virtual endpoint_type RemoteEndpoint() const = 0;
+  virtual endpoint_type LocalEndpoint() const = 0; // 服务器本地的监听地址
+  virtual endpoint_type RemoteEndpoint() const = 0; // 客户端的连接地址
 
   //! Registers a callback that will be called if the socket is closed or has an error.
   //! Should not be called if a callback is already registered.
@@ -117,10 +120,6 @@ class FiberSocketBase : public io::Sink,
   virtual void CancelOnErrorCb() = 0;
 
   struct RecvNotification {
-    // For classic recv notifications, this contains RecvCompletion (false on close, true on data).
-    // For iouring/bufring notifications, it contains either the positive error code,
-    // or the received data buffer. In latter case, the callback must consume the data before
-    // returning.
     using RecvCompletion = bool;
     std::variant<RecvCompletion, std::error_code, io::MutableBytes> read_result;
   };
@@ -137,16 +136,16 @@ class FiberSocketBase : public io::Sink,
   /// Creates a socket. By default with AF_INET family (2).
   virtual error_code Create(unsigned short protocol_family = 2) = 0;
 
-  virtual ABSL_MUST_USE_RESULT error_code Bind(const struct sockaddr* bind_addr,
+  virtual [[nodiscard]] error_code Bind(const struct sockaddr* bind_addr,
                                                unsigned addr_len) = 0;
-  virtual ABSL_MUST_USE_RESULT error_code Listen(unsigned backlog) = 0;
+  virtual [[nodiscard]] error_code Listen(unsigned backlog) = 0;
 
   // Listens on all interfaces. If port is 0 then a random available port is chosen
   // by the OS.
-  virtual ABSL_MUST_USE_RESULT error_code Listen(uint16_t port, unsigned backlog) = 0;
+  virtual [[nodiscard]] error_code Listen(uint16_t port, unsigned backlog) = 0;
 
   // Listen on UDS socket. Must be created with Create(AF_UNIX) first.
-  virtual ABSL_MUST_USE_RESULT error_code ListenUDS(const char* path, mode_t permissions,
+  virtual [[nodiscard]] error_code ListenUDS(const char* path, mode_t permissions,
                                                     unsigned backlog) = 0;
 
   // Try sending without blocking the calling fiber in case EAGAIN was encountered.
@@ -169,9 +168,9 @@ class FiberSocketBase : public io::Sink,
   ProactorBase* proactor_;
 };
 
-class LinuxSocketBase : public FiberSocketBase {
+class LinuxSocketBase : public SocketBase {
  public:
-  using FiberSocketBase::native_handle_type;
+  using SocketBase::native_handle_type;
 
   virtual ~LinuxSocketBase();
 
@@ -184,16 +183,16 @@ class LinuxSocketBase : public FiberSocketBase {
   /// Creates a socket. By default with AF_INET family (2).
   error_code Create(unsigned short protocol_family = 2) override;
 
-  ABSL_MUST_USE_RESULT error_code Bind(const struct sockaddr* bind_addr,
+  [[nodiscard]] error_code Bind(const struct sockaddr* bind_addr,
                                        unsigned addr_len) override;
-  ABSL_MUST_USE_RESULT error_code Listen(unsigned backlog) override;
+  [[nodiscard]] error_code Listen(unsigned backlog) override;
 
   // Listens on all interfaces. If port is 0 then a random available port is chosen
   // by the OS.
-  ABSL_MUST_USE_RESULT error_code Listen(uint16_t port, unsigned backlog) override;
+  [[nodiscard]] error_code Listen(uint16_t port, unsigned backlog) override;
 
   // Listen on UDS socket. Must be created with Create(AF_UNIX) first.
-  ABSL_MUST_USE_RESULT error_code ListenUDS(const char* path, mode_t permissions,
+  [[nodiscard]] error_code ListenUDS(const char* path, mode_t permissions,
                                             unsigned backlog) override;
 
   error_code Shutdown(int how) override;
@@ -233,7 +232,7 @@ class LinuxSocketBase : public FiberSocketBase {
   constexpr static unsigned kFdShift = 4;
 
   LinuxSocketBase(int fd, ProactorBase* pb)
-      : FiberSocketBase(pb), fd_(fd > 0 ? fd << kFdShift : fd) {
+      : SocketBase(pb), fd_(fd > 0 ? fd << kFdShift : fd) {
   }
 
   int ShiftedFd() const {
@@ -260,9 +259,9 @@ void SetNonBlocking(int fd);
 
 void SetCloexec(int fd);
 
-bool posix_err_wrap(ssize_t res, FiberSocketBase::error_code* ec);
+bool posix_err_wrap(ssize_t res, SocketBase::error_code* ec);
 
-nonstd::unexpected<std::error_code> MakeUnexpected(std::errc code);
+utils::unexpected<std::error_code> MakeUnexpected(std::errc code);
 
 
 }  // namespace util

@@ -6,19 +6,14 @@
 
 #include <pthread.h>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waddress"
 #include "base/function2.hpp"
-#pragma GCC diagnostic pop
 
-#include <absl/container/flat_hash_map.h>
 
 #include <functional>
 
 #include "base/mpmc_bounded_queue.h"
-#include "util/fiber_socket_base.h"
+#include "util/socket_base.h"
 #include "util/fibers/detail/result_mover.h"
-#include "util/fibers/fibers.h"
 #include "util/fibers/synchronization.h"
 
 namespace util {
@@ -36,9 +31,6 @@ class ProactorBase {
 
  public:
   enum { kTaskQueueLen = 256 };
-
-  enum Kind { EPOLL = 1, IOURING = 2 };
-  enum EpollFlags : uint8_t { EPOLL_IN = 1, EPOLL_OUT = 4 };
 
   // Corresponds to level 0.
   // Idle tasks will rest at least kIdleCycleMaxMicros / (2^level) time between runs.
@@ -60,12 +52,6 @@ class ProactorBase {
   //! Creates a new socket that can be used with this proactor.
   virtual FiberSocketBase* CreateSocket() = 0;
 
-  /**
-   * @brief Returns true if the called is running in this Proactor thread.
-   *
-   * @return true
-   * @return false
-   */
   bool InMyThread() const;
 
   // pthread id.
@@ -116,35 +102,33 @@ class ProactorBase {
     return task_queue_.is_full();
   }
 
-  //! Fire and forget - does not wait for the function to run called.
-  //! `f` should not block, lock on mutexes or Await.
-  //! Might block the calling fiber if the queue is full.
-  template <typename Func> bool DispatchBrief(Func&& brief);
+  template <typename Func> 
+  bool DispatchBrief(Func&& brief);
 
-  //! Similarly to DispatchBrief but 'f' is wrapped in fiber.
-  //! f is allowed to fiber-block or await.
-  template <typename Func, typename... Args> void Dispatch(Func&& f, Args&&... args) {
-    // Ideally we want to forward args into lambda but it's too complicated before C++20.
-    // So I just copy them into capture.
-    // We forward captured variables so we need lambda to be mutable.
+  
+  template <typename Func, typename... Args> 
+  void Dispatch(Func&& f, Args&&... args) {
     DispatchBrief([f = std::forward<Func>(f), args...]() mutable {
       Fiber("Dispatched", std::forward<Func>(f), std::forward<Args>(args)...).Detach();
     });
   }
 
   //! Similarly to DispatchBrief but waits 'f' to return.
-  template <typename Func> auto AwaitBrief(Func&& brief) -> decltype(brief());
+  template <typename Func> auto 
+  AwaitBrief(Func&& brief) -> decltype(brief());
 
   // Runs possibly awaiting function 'f' safely in Proactor thread and waits for it to finish,
   // If we are in his thread already, runs 'f' directly, otherwise
   // runs it wrapped in a fiber. Should be used instead of 'AwaitBrief' when 'f' itself
   // awaits on something.
   // To summarize: 'f' may not block its thread, but allowed to block its fiber.
-  template <typename Func> auto Await(Func&& f, const Fiber::Opts& = {}) -> decltype(f());
+  template <typename Func> 
+  auto Await(Func&& f, const Fiber::Opts& = {}) -> decltype(f());
 
   // Please note that this function uses Await, therefore can not be used inside
   // Proactor main fiber (i.e. Async callbacks).
-  template <typename... Args> Fiber LaunchFiber(Args&&... args) {
+  template <typename... Args> 
+  Fiber LaunchFiber(Args&&... args) {
     Fiber fb;
 
     // It's safe to use & capture since we await before returning.
@@ -198,12 +182,7 @@ class ProactorBase {
     return tq_wakeup_skipped_ev_.load(std::memory_order_relaxed);
   }
 
-  struct Stats {
-    uint64_t num_stalls = 0, completions_fetches = 0, loop_cnt = 0, num_suspends = 0;
-    uint64_t num_task_runs = 0, task_interrupts = 0;
-    uint64_t cqe_count = 0;
-    uint64_t uring_submit_calls = 0;
-  };
+
 
   const Stats& stats() const {
     return stats_;
@@ -218,7 +197,10 @@ class ProactorBase {
   uint64_t GetCurrentBusyCycles() const;
 
   void SetBusyPollUsec(uint32_t usec);
- protected:
+protected:
+
+
+
   enum { WAIT_SECTION_STATE = 1UL << 31 };
   static constexpr unsigned kMaxSpinLimit = 5;
 
@@ -277,78 +259,100 @@ class ProactorBase {
     return busy_poll_start_cycle_;
   }
 
-  pthread_t thread_id_ = 0U;
-  int sys_thread_id_ = 0;
-  int32_t pool_index_ = -1;
-  int wake_fd_ = -1;
-  bool is_stopped_ = true;
 
-  std::atomic_uint32_t tq_seq_{0};
-  std::atomic_uint32_t tq_full_ev_{0};            // task queue full events.
-  std::atomic_uint32_t tq_wakeup_ev_{0};          // task queue wakeup events.
-  std::atomic_uint32_t tq_wakeup_skipped_ev_{0};  // task queue wakeup prevented events.
+    struct Stats {
+      uint64_t num_stalls = 0, completions_fetches = 0, loop_cnt = 0, num_suspends = 0;
+      uint64_t num_task_runs = 0, task_interrupts = 0;
+      uint64_t cqe_count = 0;
+      uint64_t uring_submit_calls = 0;
+    };
 
-  Stats stats_;
+    pthread_t thread_id_ = 0U;
+    int sys_thread_id_ = 0;
+    int32_t pool_index_ = -1;
+    int wake_fd_ = -1;
+    bool is_stopped_ = true;
 
-  // We use fu2 function to allow moveable semantics.
-  using Fu2Fun =
-      fu2::function_base<true /*owns*/, false /*non-copyable*/, fu2::capacity_fixed<16, 8>,
-                         false /* non-throwing*/, false /* strong exceptions guarantees*/, void()>;
-  struct Tasklet : public Fu2Fun {
-    using Fu2Fun::Fu2Fun;
-    using Fu2Fun::operator=;
-  };
-  static_assert(sizeof(Tasklet) == 32, "");
+    std::atomic<uint32_t> tq_seq_{0};
+    std::atomic<uint32_t> tq_full_ev_{0};            // task queue full events.
+    std::atomic<uint32_t> tq_wakeup_ev_{0};          // task queue wakeup events.
+    std::atomic<uint32_t> tq_wakeup_skipped_ev_{0};  // task queue wakeup prevented events. 
+    // 记录“尝试唤醒 Proactor 线程但实际上跳过唤醒”的次数。
 
-  using FuncQ = base::mpmc_bounded_queue<Tasklet>;
+    Stats stats_;
 
-  FuncQ task_queue_;
-  EventCount task_queue_avail_;
+    // We use fu2 function to allow moveable semantics.
+    using Fu2Fun =
+        fu2::function_base<true /*owns*/, false /*non-copyable*/, fu2::capacity_fixed<16, 8>,
+                          false /* non-throwing*/, false /* strong exceptions guarantees*/, void()>;
 
-  uint32_t next_task_id_{1};
 
-  // Runs tasks when there is available cpu time and no I/O events demand it.
-  struct OnIdleWrapper {
-    OnIdleTask task;
-    uint64_t next_ts;  // when to run the next time in nano seconds.
-  };
+    struct Tasklet : public Fu2Fun {
+      using Fu2Fun::Fu2Fun;
+      using Fu2Fun::operator=;
+    };
 
-  std::vector<OnIdleWrapper> on_idle_arr_;
-  uint32_t on_idle_next_ = 0;
+    
+    static_assert(sizeof(Tasklet) == 32, "");
 
-  absl::flat_hash_map<uint32_t, PeriodicItem*> periodic_map_;
-  uint64_t busy_poll_start_cycle_ = 0;
-  uint64_t busy_poll_cycle_limit_ = 0;
-  uint64_t io_wait_end_cycle_ = 0;
-  struct TLInfo {
-    uint64_t monotonic_time = 0;  // in nanoseconds
-    ProactorBase* owner = nullptr;
-  };
-  static __thread TLInfo tl_info_;
+    using FuncQ = base::mpmc_bounded_queue<Tasklet>;
+
+    FuncQ task_queue_;
+    EventCount task_queue_avail_;
+
+    uint32_t next_task_id_{1};
+
+    // Runs tasks when there is available cpu time and no I/O events demand it.
+    struct OnIdleWrapper {
+      OnIdleTask task;
+      uint64_t next_ts;  // when to run the next time in nano seconds. // 下一次允许执行的时间点
+    };
+
+    std::vector<OnIdleWrapper> on_idle_arr_;
+    uint32_t on_idle_next_ = 0;
+
+    std::unordered_map<uint32_t, PeriodicItem*> periodic_map_;
+    uint64_t busy_poll_start_cycle_ = 0;
+    uint64_t busy_poll_cycle_limit_ = 0;
+    uint64_t io_wait_end_cycle_ = 0;
+    struct TLInfo {
+      uint64_t monotonic_time = 0;  // in nanoseconds
+      ProactorBase* owner = nullptr;
+    };
+    static __thread TLInfo tl_info_;
+
+
 
  private:
-  template <typename Func> bool EmplaceTaskQueue(Func&& f) {
-    if (task_queue_.try_enqueue(std::forward<Func>(f))) {
-      WakeupIfNeeded();
+    template <typename Func> bool EmplaceTaskQueue(Func&& f) {
+      if (task_queue_.try_enqueue(std::forward<Func>(f))) {
+        WakeupIfNeeded();
 
-      return true;
+        return true;
+      }
+      return false;
     }
-    return false;
-  }
 
-  uint64_t last_level2_cycle_ = 0;
-  uint64_t cpu_measure_cycle_start_ = 0, cpu_idle_cycles_ = 0;
-  uint64_t load_numerator_ = 0, load_denominator_ = 1;
+
+
+
+
+
+    uint64_t last_level2_cycle_ = 0; // 控制 L2 任务频率
+    uint64_t cpu_measure_cycle_start_ = 0; // 周期起点
+    uint64_t cpu_idle_cycles_ = 0; // 累计空闲时间
+    uint64_t load_numerator_ = 0; // 繁忙周期滑动和
+    uint64_t load_denominator_ = 1; // 总周期滑动和
 };
 
-class ProactorDispatcher : public DispatchPolicy {
+class ProactorDispatcher  {
  public:
   explicit ProactorDispatcher(ProactorBase* proactor) : proactor_(proactor) {
   }
 
  private:
   void Run(detail::Scheduler* sched);
-  void Notify() final;
+  void Notify();
 
   ProactorBase* proactor_;
 };
@@ -376,7 +380,8 @@ inline void ProactorBase::WakeupIfNeeded() {
   }
 }
 
-template <typename Func> bool ProactorBase::DispatchBrief(Func&& f) {
+template <typename Func> 
+bool ProactorBase::DispatchBrief(Func&& f) {
   if (EmplaceTaskQueue(std::forward<Func>(f)))
     return false;
 

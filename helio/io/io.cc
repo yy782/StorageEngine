@@ -3,8 +3,6 @@
 //
 #include "io/io.h"
 
-#include <absl/container/fixed_array.h>
-
 #include <cstring>
 
 #include "base/logging.h"
@@ -33,7 +31,7 @@ Result<size_t> WriteSomeBytes(const iovec* v, uint32_t len, Sink* dest) {
 }
 
 struct AsyncWriteState {
-  absl::FixedArray<iovec, 4> arr;
+  std::vector<iovec> arr;
   AsyncResultCb cb;
   iovec* cur;
   AsyncSink* owner;
@@ -47,7 +45,7 @@ struct AsyncWriteState {
 };
 
 struct AsyncReadState {
-  absl::FixedArray<iovec, 4> arr;
+  std::vector<iovec> arr;
   AsyncResultCb cb;
   iovec* cur;
   AsyncSource* owner;

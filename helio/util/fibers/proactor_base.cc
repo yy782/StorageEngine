@@ -10,27 +10,12 @@
 
 #include "base/cycle_clock.h"
 
-#if __linux__
 #include <sys/eventfd.h>
 constexpr int kNumSig = _NSIG;
-
-#if defined(__aarch64__)
-#include <sys/auxv.h>
-
-#ifndef HWCAP_SB
-#define HWCAP_SB (1 << 29)
-#endif
-#endif  // __aarch64__
-
-#else
-constexpr int kNumSig = NSIG;
-#endif  // __linux__
 
 #include <mutex>  // once_flag
 
 #include "base/logging.h"
-
-using namespace std;
 
 namespace util {
 namespace fb2 {
@@ -65,28 +50,6 @@ void SigAction(int signal, siginfo_t*, void*) {
   }
 }
 
-#if defined(__aarch64__)
-// ARM architecture pause implementation
-static inline void arm_arch_pause(void) {
-#if defined(__linux__)
-  static int use_spin_delay_sb = -1;
-
-  if (use_spin_delay_sb == 1) {
-    asm volatile(".inst 0xd50330ff");  // SB instruction encoding
-  } else if (use_spin_delay_sb == 0) {
-    asm volatile("isb");
-  } else {
-    // Initialize variable and check if SB is supported
-    if (getauxval(AT_HWCAP) & HWCAP_SB)
-      use_spin_delay_sb = 1;
-    else
-      use_spin_delay_sb = 0;
-  }
-#else
-  asm volatile("isb");
-#endif  // __linux__
-}
-#endif  // __aarch64__
 
 unsigned pause_amplifier = 50;
 uint64_t cycles_per_10us = 1000000;  // correctly defined inside ModuleInit.
@@ -103,17 +66,14 @@ ProactorBase::ProactorBase() : task_queue_(kTaskQueueLen) {
 
   SetBusyPollUsec(20);
 
-#ifdef __linux__
   wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
   CHECK_GE(wake_fd_, 0);
   VLOG(1) << "Created wake_fd is " << wake_fd_;
-#endif
+
 }
 
 ProactorBase::~ProactorBase() {
-#ifdef __linux__
   close(wake_fd_);
-#endif
 
   signal_state* ss = get_signal_state();
   for (size_t i = 0; i < ABSL_ARRAYSIZE(ss->signal_map); ++i) {
@@ -377,13 +337,9 @@ void ProactorBase::ResetBusyPoll() {
 
 void ProactorBase::Pause(unsigned count) {
   auto pc = pause_amplifier;
-
   for (unsigned i = 0; i < count * pc; ++i) {
-#if defined(__i386__) || defined(__amd64__)
     __asm__ __volatile__("pause");
-#elif defined(__aarch64__)
-    arm_arch_pause();
-#endif
+
   }
 }
 
