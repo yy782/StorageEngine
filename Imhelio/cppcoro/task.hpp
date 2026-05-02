@@ -160,52 +160,10 @@ private:
 }
 
 
-struct awaitable_base
-{
-    std::coroutine_handle<promise_type> coroutine_;
-
-    awaitable_base(std::coroutine_handle<promise_type> coroutine) noexcept
-      : coroutine_(coroutine)
-    {}
-
-    bool await_ready() const noexcept
-    {
-      return !coroutine_ || coroutine_.done();
-    }
 
 
-    std::coroutine_handle<> await_suspend(
-        std::coroutine_handle<> awaitingCoroutine) noexcept
-      {
-        coroutine_.promise().set_continuation(awaitingCoroutine);
-        return coroutine_;
-      }
 
-
-      decltype(auto) await_resume() &&
-      {
-        if (!this->coroutine_)
-        {
-          throw broken_promise{};
-        }
-
-        return std::move(this->coroutine_.promise()).result();
-      }
-
-      decltype(auto) await_resume() &
-      {
-        if (!this->coroutine_)
-        {
-          throw broken_promise{};
-        }
-
-        return this->coroutine_.promise().result();
-      }
-
-};
-
-
-template<typename T = void, typename awaitable = awaitable_base, typename TaskPromise = task_promise<T>>
+template<typename T = void, typename TaskPromise = task_promise<T>>
 class [[nodiscard]] task
 {
   using promise_type = TaskPromise;
@@ -289,7 +247,49 @@ public:
   }
 
 protected:
+  struct awaitable_base
+  {
+      std::coroutine_handle<promise_type> coroutine_;
 
+      awaitable_base(std::coroutine_handle<promise_type> coroutine) noexcept
+        : coroutine_(coroutine)
+      {}
+
+      bool await_ready() const noexcept
+      {
+        return !coroutine_ || coroutine_.done();
+      }
+
+
+      std::coroutine_handle<> await_suspend(
+          std::coroutine_handle<> awaitingCoroutine) noexcept
+        {
+          coroutine_.promise().set_continuation(awaitingCoroutine);
+          return coroutine_;
+        }
+
+
+        decltype(auto) await_resume() &&
+        {
+          if (!this->coroutine_)
+          {
+            throw broken_promise{};
+          }
+
+          return std::move(this->coroutine_.promise()).result();
+        }
+
+        decltype(auto) await_resume() &
+        {
+          if (!this->coroutine_)
+          {
+            throw broken_promise{};
+          }
+
+          return this->coroutine_.promise().result();
+        }
+
+  };
 
   std::coroutine_handle<promise_type> coroutine_;
 
