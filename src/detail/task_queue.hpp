@@ -10,7 +10,7 @@ namespace dfly {
 
 
 struct Worker{
-    using Task = cppcoro::task<void, task_promise<void, false>>;
+    using Task = cppcoro::task<void, task_promise<void, false>>; // 开始不挂起，立即执行
     template<class Func>
     Task run(Func&& func){
         func();
