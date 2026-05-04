@@ -13,12 +13,12 @@ class EngineShardSet;
 class EngineShardSet {
 public:
 
-    explicit EngineShardSet(util::ProactorPool* pp) : 
+    explicit EngineShardSet(util::UringProactorPool* pp) : 
     pp_(pp) {}
 
     uint32_t size() const { return size_; }
 
-    util::ProactorPool* pool() { return pp_; }
+    util::UringProactorPool* pool() { return pp_; }
 
     void Init(uint32_t size, std::function<void()> shard_handler);
 
@@ -61,7 +61,7 @@ public:
     void RunBlockingInParallel(U&& func, P&& pred);
     template <typename U> 
     void AwaitRunningOnShardQueue(U&& func) {
-        util::fb2::BlockingCounter bc(size_);
+        util::BlockingCounter bc(size_);
         for (size_t i = 0; i < size_; ++i) {
         Add(i, [&func, bc]() mutable {
             func(EngineShard::tlocal());
@@ -72,22 +72,22 @@ public:
         bc->Wait();
     }
 private:
-    void InitThreadLocal(util::ProactorBase* pb);
-    base::ProactorPool* pp_;
+    void InitThreadLocal(util::UringProactor* pb);
+    base::UringProactorPool* pp_;
     std::unique_ptr<EngineShard*[]> shards_;
     uint32_t size_ = 0;
 };
 
 template <typename U, typename P>
 void EngineShardSet::RunBriefInParallel(U&& func, P&& pred) const {
-    util::fb2::BlockingCounter bc{0};
+    util::BlockingCounter bc{0};
 
     for (uint32_t i = 0; i < size(); ++i) {
         if (!pred(i))
             continue;
 
         bc->Add(1);
-        util::ProactorBase* dest = pp_->at(i);
+        auto dest = pp_->at(i);
         dest->DispatchBrief([&func, bc]() mutable {
             func(EngineShard::tlocal());
             bc->Dec();
@@ -96,21 +96,17 @@ void EngineShardSet::RunBriefInParallel(U&& func, P&& pred) const {
     bc->Wait();
 }
 
-template <typename U, typename P> void EngineShardSet::RunBlockingInParallel(U&& func, P&& pred) {
-    util::fb2::BlockingCounter bc{0};
-    static_assert(std::is_invocable_v<U, EngineShard*>,
-                    "Argument must be invocable EngineShard* as argument.");
-    static_assert(std::is_void_v<std::invoke_result_t<U, EngineShard*>>,
-                    "Callable must not have a return value!");
+template <typename U, typename P> 
+void EngineShardSet::RunBlockingInParallel(U&& func, P&& pred) {
+    util::BlockingCounter bc{0};
+
 
     for (uint32_t i = 0; i < size(); ++i) {
         if (!pred(i))
             continue;
         bc->Add(1);
-        util::ProactorBase* dest = pp_->at(i);
-
-        // the "Dispatch" call spawns a fiber underneath.
-        dest->Dispatch([&func, bc]() mutable {
+        auto dest = pp_->at(i);
+        dest->DispatchBrief([&func, bc]() mutable {
             func(EngineShard::tlocal());
             bc->Dec();
         });

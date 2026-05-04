@@ -13,7 +13,6 @@ namespace dfly {
 
 Namespace::Namespace() {
     shard_db_slices_.resize(shard_set->size());
-    // shard_blocking_controller_.resize(shard_set->size());
     shard_set->RunBriefInParallel([&](EngineShard* es) { // 并行执行
         ShardId sid = es->shard_id();
         shard_db_slices_[sid] = std::make_unique<DbSlice>(sid, false, es);
@@ -50,7 +49,7 @@ Namespaces::~Namespaces() {
 }
 
 void Namespaces::Clear() {
-    util::fb2::LockGuard guard(mu_);
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
 
     default_namespace_ = nullptr;
 
@@ -75,16 +74,16 @@ Namespace& Namespaces::GetOrInsert(std::string_view ns) {
     std::string nns=std::string(ns);                // not same
     {
         // Try to look up under a shared lock
-        SharedLock guard(mu_);
+        std::shared_lock<std::shared_mutex> lock(rw_mutex);
         auto it = namespaces_.find(nns);            
         if (it != namespaces_.end()) {
-        return it->second;
+            return it->second;
         }
     }
 
     {
         // Key was not found, so we create create it under unique lock
-        util::fb2::LockGuard guard(mu_);
+        std::unique_lock<std::shared_mutex> lock(rw_mutex);
         return namespaces_[nns];
     }
 }
